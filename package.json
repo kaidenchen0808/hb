@@ -1,0 +1,30 @@
+{
+  "name": "companion-layer",
+  "version": "0.1.0",
+  "description": "Agent 事件感知 + 人格 + 记忆 + 好感度的桌面角色中间层，对接 AniCompanion 渲染端",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=23.6"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "dev": "node --watch src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "mcp": "node bin/companion-mcp.js"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "dotenv": "^16.4.7",
+    "hono": "^4.6.0",
+    "yaml": "^2.7.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}

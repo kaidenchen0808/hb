@@ -1,0 +1,26 @@
+{
+  "_comment": "把 hooks 字段合并进 ~/.claude/settings.json（或项目 .claude/settings.json），把路径替换为本仓库的绝对路径。依赖 jq 与 curl。",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/chenxuewei/hb/hooks/report-event.sh PostToolUse"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash /Users/chenxuewei/hb/hooks/stop-claude.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
