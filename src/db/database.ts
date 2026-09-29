@@ -57,6 +57,14 @@ const SCHEMA_STATEMENTS = [
     stage TEXT PRIMARY KEY,
     triggered_at TEXT NOT NULL
   )`,
+
+  `CREATE TABLE IF NOT EXISTS outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL,
+    source TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    delivered_at TEXT
+  )`,
 ]
 
 /** 打开（或创建）数据库，启用 WAL 支持与 HTTP 服务/MCP 进程的并发读写。幂等建表。 */

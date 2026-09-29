@@ -6,6 +6,7 @@ import { handleChatCompletion, type GatewayDeps } from './gateway.ts'
 import { isEventType, recentEvents } from '../memory/eventStore.ts'
 import { isHookType, recordRawEvent, type RawEventInput } from '../memory/rawEvents.ts'
 import { finalizeSession } from '../memory/aggregator.ts'
+import { drainOutbox, enqueueSay } from '../memory/outbox.ts'
 import { settleAgentPresence } from '../memory/relationship.ts'
 
 export interface AppDeps extends GatewayDeps {
@@ -90,6 +91,27 @@ export function createApp(deps: AppDeps): Hono {
     const limitRaw = c.req.query('limit')
     const limit = limitRaw === undefined ? 20 : Math.min(Math.max(Number.parseInt(limitRaw, 10) || 20, 1), 100)
     return c.json({ events: recentEvents(db, limit) })
+  })
+
+  // ---- 即时说话通道（AniCompanion 轮询消费） ----
+
+  // 入队一条她立刻要说的话（终端 / Agent / 脚本调用）
+  app.post('/api/say', async (c) => {
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null)
+    if (body === null || typeof body.text !== 'string' || body.text.trim() === '') {
+      return c.json({ error: { message: '需要 text（她要说的台词，可含 [emotion] 标签）' } }, 400)
+    }
+    const source = typeof body.source === 'string' ? body.source : 'api'
+    const msg = enqueueSay(db, body.text, source)
+    return c.json({ ok: true, id: msg.id })
+  })
+
+  // AniCompanion 补丁轮询：返回待播消息（取出即投递，at-most-once）
+  app.get('/v1/notifications', (c) => {
+    const messages = drainOutbox(db)
+    return c.json({
+      notifications: messages.map((m) => ({ id: String(m.id), text: m.text, source: m.source })),
+    })
   })
 
   return app

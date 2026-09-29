@@ -3,6 +3,7 @@ import { execFile } from 'node:child_process'
 import { z } from 'zod'
 import type { CompanionDb } from '../db/database.ts'
 import { insertEvent, isEventType, recentEvents } from '../memory/eventStore.ts'
+import { enqueueSay } from '../memory/outbox.ts'
 import { settleAgentPresence } from '../memory/relationship.ts'
 
 const AGENT_NAME_MAX = 32
@@ -58,6 +59,23 @@ export function buildMcpServer(db: CompanionDb): McpServer {
         .map((e) => `${e.created_at.slice(5, 16).replace('T', ' ')} [${e.agent}] ${e.event_type}: ${e.summary}`)
         .join('\n')
       return { content: [{ type: 'text', text }] }
+    },
+  )
+
+  server.registerTool(
+    'companion_speak',
+    {
+      title: '让她立刻开口',
+      description:
+        '让桌面上的她立刻把一段话说出来（语音+表情，AniCompanion 轮询即时播放）。text 是她的台词本身，可含 [emotion] 标签（happy/shy/love/laugh 等）。仅用于需要她马上开口的时刻；一般工作汇报用 companion_report。',
+      inputSchema: {
+        text: z.string().min(1).max(500).describe('她的台词，例如"[happy] 主人，Codex 跑完测试啦，全过了哦"'),
+        source: z.string().max(32).optional().describe('来源标记，如 claude-code'),
+      },
+    },
+    async (args: { text: string; source?: string }) => {
+      const msg = enqueueSay(db, args.text, args.source ?? 'mcp')
+      return { content: [{ type: 'text', text: `已入队（#${msg.id}），她马上会说：${args.text.slice(0, 60)}` }] }
     },
   )
 
