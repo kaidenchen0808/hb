@@ -1,6 +1,6 @@
 import type { Context } from 'hono'
 import { streamSSE } from 'hono/streaming'
-import type { AppConfig } from '../config.ts'
+import { brainReady, type AppConfig } from '../config.ts'
 import type { CompanionDb } from '../db/database.ts'
 import type { Persona } from '../persona/loader.ts'
 import { stageForAffinity } from '../persona/loader.ts'
@@ -44,10 +44,6 @@ function normalizeContent(content: unknown): string {
       .join('')
   }
   return ''
-}
-
-function brainReady(config: AppConfig): boolean {
-  return config.brainBaseUrl !== '' && config.brainApiKey !== '' && config.brainModel !== ''
 }
 
 export function handleChatCompletion(deps: GatewayDeps) {
@@ -133,7 +129,7 @@ export function handleChatCompletion(deps: GatewayDeps) {
           await stream.writeSSE({ data })
         }
       } catch (err) {
-        const msg = err instanceof LlmUnavailableError ? err.message : '未知错误'
+        const msg = err instanceof LlmUnavailableError ? err.message : err instanceof Error ? `${err.name}: ${err.message}` : String(err)
         console.error('[gateway] 上游失败:', msg)
         if (assistantText === '') {
           await stream.writeSSE({
@@ -171,13 +167,21 @@ function settleAfterChat(
       console.log(`[relationship] 阶段跃迁 → ${transition.stage}（好感度 ${before} → ${after}），告白已排队`)
     }
 
-    if (input.lastUser !== null && input.assistantText.trim() !== '' && brainReady(config)) {
+    // 记忆提取走直连大脑（避免每次聊天额外 spawn 一次 claude）；未配直连则跳过
+    const directBrainReady = config.brainBaseUrl !== '' && config.brainApiKey !== '' && config.brainModel !== ''
+    if (input.lastUser !== null && input.assistantText.trim() !== '' && directBrainReady) {
       const conversation: ChatMessage[] = [
         ...(input.lastUser !== null ? [{ role: 'user' as const, content: input.lastUser }] : []),
         { role: 'assistant' as const, content: input.assistantText },
       ]
       void extractFacts(
-        { baseUrl: config.brainBaseUrl, apiKey: config.brainApiKey, model: config.brainModel, apiFormat: config.brainApiFormat },
+        {
+          baseUrl: config.brainBaseUrl,
+          apiKey: config.brainApiKey,
+          model: config.brainModel,
+          // 直连格式按端点推断（anthropic 端点 ↔ GLM Coding Plan）
+          apiFormat: config.brainBaseUrl.includes('anthropic') ? 'anthropic' : 'openai',
+        },
         conversation,
         (facts) => {
           const n = insertFacts(db, facts)

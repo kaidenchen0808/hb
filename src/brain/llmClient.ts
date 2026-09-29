@@ -1,3 +1,7 @@
+import { spawn } from 'node:child_process'
+import { createInterface } from 'node:readline'
+import { homedir } from 'node:os'
+
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
   content: string
@@ -10,8 +14,8 @@ export interface StreamChatOptions {
   messages: ChatMessage[]
   signal?: AbortSignal
   temperature?: number
-  /** openai: /chat/completions；anthropic: /v1/messages（SSE 转换为 OpenAI chunk 输出） */
-  apiFormat?: 'openai' | 'anthropic'
+  /** openai: /chat/completions；anthropic: /v1/messages；claude-code: spawn claude -p 子进程（带只读工具） */
+  apiFormat?: 'openai' | 'anthropic' | 'claude-code'
 }
 
 export class LlmUnavailableError extends Error {
@@ -26,7 +30,9 @@ export class LlmUnavailableError extends Error {
 
 /** 统一入口：按 apiFormat 分发。输出恒为 OpenAI chunk JSON 字符串（真流式）。 */
 export async function* streamChatCompletion(opts: StreamChatOptions): AsyncGenerator<string> {
-  if (opts.apiFormat === 'anthropic') {
+  if (opts.apiFormat === 'claude-code') {
+    yield* streamClaudeCode(opts)
+  } else if (opts.apiFormat === 'anthropic') {
     yield* streamAnthropic(opts)
   } else {
     yield* streamOpenai(opts)
@@ -123,6 +129,135 @@ async function* streamAnthropic(opts: StreamChatOptions): AsyncGenerator<string>
     } catch {
       // 非 JSON 载荷忽略
     }
+  }
+}
+
+// ---- claude-code 子进程模式（她的"手"）----
+
+/** 只读工具白名单：她能看能查，但不能改、不能删、不能跑任意命令。 */
+const CLAUDE_CODE_ALLOWED_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch']
+const CLAUDE_CODE_TIMEOUT_MS = 120_000
+/** 工具调用期间的流式提示语（只插一次，防止长时间无输出像卡死）。 */
+const TOOL_USE_PLACEHOLDER = '（等我查一下哦…）'
+
+/** 解析 claude -p --output-format stream-json 的一行，返回 assistant 文本；无文本返回 null。纯函数可测。 */
+export function extractClaudeAssistantText(line: string): string | null {
+  let evt: unknown
+  try {
+    evt = JSON.parse(line)
+  } catch {
+    return null
+  }
+  const e = evt as { type?: string; message?: { content?: unknown } }
+  if (e.type !== 'assistant' || !Array.isArray(e.message?.content)) return null
+  const text = (e.message!.content as { type: string; text?: string }[])
+    .filter((b) => b.type === 'text' && typeof b.text === 'string')
+    .map((b) => b.text)
+    .join('')
+  return text === '' ? null : text
+}
+
+/** 该行是否含 tool_use 块（用于插入"查一下"占位）。纯函数可测。 */
+export function claudeLineHasToolUse(line: string): boolean {
+  try {
+    const e = JSON.parse(line) as { type?: string; message?: { content?: { type: string }[] } }
+    return e.type === 'assistant' && Array.isArray(e.message?.content) && e.message!.content.some((b) => b.type === 'tool_use')
+  } catch {
+    return false
+  }
+}
+
+/** 把 messages 组装成喂给 claude -p 的 stdin（system 已通过 --system-prompt 传入）。 */
+function buildConversationPrompt(messages: ChatMessage[]): string {
+  const rest = messages.filter((m) => m.role !== 'system')
+  if (rest.length === 0) return '（主动跟主人打个招呼吧）'
+  const lines = rest.map((m) => `${m.role === 'user' ? '主人' : '你'}：${m.content}`)
+  return `${lines.join('\n\n')}\n\n（请以"你"的身份自然回应最后一条消息）`
+}
+
+/** claude-code 模式专属：让模型知道自己有工具可用（人格 prompt 里没有这段）。 */
+const TOOL_GUIDANCE = `
+
+## 你还有一双"手"
+你可以使用这些工具：Read（读文件）、Glob/Grep（搜代码）、WebSearch（联网搜索）、WebFetch（抓网页）。
+当主人问需要外部信息的问题（天气、新闻、资料、他电脑里的内容）时，先悄悄用工具查，
+再用一两句人话把结果讲给他听——就像你本来就知道一样，不用说"我调用了工具"。
+查不到就说查不到，不要编造。
+回复是语音播报的：绝不要输出链接、URL、"Sources"列表或 markdown 格式，来源用"天气网上说"这类口语自然带过。`
+
+/** claude-code 模式：spawn claude -p 子进程，流式解析 JSONL 输出转 OpenAI chunk。 */
+async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string> {
+  const system = opts.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
+  const prompt = buildConversationPrompt(opts.messages)
+  const id = crypto.randomUUID()
+
+  const child = spawn(
+    'claude',
+    [
+      '-p',
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--system-prompt', (system === '' ? 'You are a helpful assistant.' : system) + TOOL_GUIDANCE,
+      '--allowedTools', CLAUDE_CODE_ALLOWED_TOOLS.join(','),
+    ],
+    { cwd: homedir(), env: process.env, stdio: ['pipe', 'pipe', 'pipe'] },
+  )
+
+  let stderrText = ''
+  child.stderr.on('data', (d: Buffer) => {
+    stderrText += d.toString()
+    if (stderrText.length > 2000) stderrText = stderrText.slice(-2000)
+  })
+  child.stdin.on('error', () => {}) // spawn 失败时的 EPIPE 由 error 分支统一处理
+
+  const timedOut = { value: false }
+  const timer = setTimeout(() => {
+    timedOut.value = true
+    child.kill('SIGKILL')
+  }, CLAUDE_CODE_TIMEOUT_MS)
+  const onAbort = () => child.kill('SIGKILL')
+  opts.signal?.addEventListener('abort', onAbort, { once: true })
+
+  let exited: { code: number | null } | null = null
+  // 对象包装：闭包内赋值的原始类型 let 会被 CFA 窄化为 never（timedOut 同理）
+  const spawnError = { err: null as Error | null }
+  const exitedPromise = new Promise<{ code: number | null }>((resolve) => {
+    child.on('error', (err) => {
+      spawnError.err = err
+      resolve({ code: null })
+    })
+    child.on('close', (code) => {
+      exited = { code }
+      resolve({ code })
+    })
+  })
+
+  child.stdin.write(prompt)
+  child.stdin.end()
+
+  let placeholderSent = false
+  try {
+    const rl = createInterface({ input: child.stdout })
+    for await (const line of rl) {
+      if (placeholderSent === false && claudeLineHasToolUse(line)) {
+        placeholderSent = true
+        yield wrapAsChunk(id, opts.model === '' ? 'claude-code' : opts.model, TOOL_USE_PLACEHOLDER)
+      }
+      const text = extractClaudeAssistantText(line)
+      if (text !== null) yield wrapAsChunk(id, opts.model === '' ? 'claude-code' : opts.model, text)
+    }
+  } finally {
+    opts.signal?.removeEventListener('abort', onAbort)
+    clearTimeout(timer)
+  }
+
+  const result = exited ?? (await exitedPromise)
+  if (timedOut.value) throw new LlmUnavailableError('claude-code 超时（120s）')
+  if (spawnError.err !== null) {
+    throw new LlmUnavailableError(`claude CLI 启动失败（是否已安装并在 PATH?）: ${spawnError.err.message}`)
+  }
+  if (result.code !== 0) {
+    throw new LlmUnavailableError(`claude CLI 退出码 ${result.code}: ${stderrText.slice(-300)}`)
   }
 }
 

@@ -4,6 +4,8 @@ import { resolve } from 'node:path'
 
 loadDotenv({ quiet: true })
 
+export type BrainApiFormat = 'openai' | 'anthropic' | 'claude-code'
+
 export interface AppConfig {
   port: number
   dbPath: string
@@ -11,8 +13,14 @@ export interface AppConfig {
   brainBaseUrl: string
   brainApiKey: string
   brainModel: string
-  brainApiFormat: 'openai' | 'anthropic'
+  brainApiFormat: BrainApiFormat
   companionApiKey: string | null
+}
+
+/** 聊天大脑是否就绪：claude-code 只需本机 CLI；直连模式需要完整 BRAIN_* 三项。 */
+export function brainReady(c: AppConfig): boolean {
+  if (c.brainApiFormat === 'claude-code') return true
+  return c.brainBaseUrl !== '' && c.brainApiKey !== '' && c.brainModel !== ''
 }
 
 function readInt(name: string, fallback: number): number {
@@ -30,6 +38,11 @@ function readStr(name: string, fallback = ''): string {
   return raw === undefined ? fallback : raw.trim()
 }
 
+function readBrainFormat(raw: string): BrainApiFormat {
+  if (raw === 'anthropic' || raw === 'claude-code') return raw
+  return 'openai'
+}
+
 /** 加载并校验配置。BRAIN_* 缺失时仅告警（可先跑通 hooks 链路再补大脑），聊天接口会返回明确错误。 */
 export function loadConfig(): AppConfig {
   const cfg: AppConfig = {
@@ -39,7 +52,7 @@ export function loadConfig(): AppConfig {
     brainBaseUrl: readStr('BRAIN_BASE_URL').replace(/\/+$/, ''),
     brainApiKey: readStr('BRAIN_API_KEY'),
     brainModel: readStr('BRAIN_MODEL'),
-    brainApiFormat: readStr('BRAIN_API_FORMAT', 'openai') === 'anthropic' ? 'anthropic' : 'openai',
+    brainApiFormat: readBrainFormat(readStr('BRAIN_API_FORMAT', 'openai')),
     companionApiKey: readStr('COMPANION_API_KEY') || null,
   }
 
@@ -47,8 +60,11 @@ export function loadConfig(): AppConfig {
     throw new Error(`人格文件不存在: ${cfg.personaPath}（可用 PERSONA_PATH 指定）`)
   }
   const missing = (['BRAIN_BASE_URL', 'BRAIN_API_KEY', 'BRAIN_MODEL'] as const).filter((k) => readStr(k) === '')
-  if (missing.length > 0) {
+  if (missing.length > 0 && cfg.brainApiFormat !== 'claude-code') {
     console.warn(`[config] 警告: 未配置 ${missing.join(', ')} —— 聊天接口不可用，请参考 .env.example 补齐后重启`)
+  }
+  if (cfg.brainApiFormat === 'claude-code' && missing.length > 0) {
+    console.warn('[config] 提示: claude-code 模式下 BRAIN_* 未配全，记忆提取(facts)将跳过（只影响长期记忆，不影响聊天）')
   }
   return cfg
 }
