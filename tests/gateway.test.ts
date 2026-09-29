@@ -126,3 +126,24 @@ describe('chat gateway', () => {
     expect(res.status).toBe(400)
   })
 })
+
+describe('hybrid [lookup] 标记处理', () => {
+  it('splitLookup 分离回复与查询', async () => {
+    const { splitLookup } = await import('../src/http/gateway.ts')
+    expect(splitLookup('[happy] 等我查一下哦～\n[lookup] 深圳今天天气')).toEqual({
+      reply: '[happy] 等我查一下哦～\n',
+      query: '深圳今天天气',
+    })
+    expect(splitLookup('[happy] 普通回复')).toEqual({ reply: '[happy] 普通回复', query: null })
+    expect(splitLookup('转场\n[lookup]  [curious] 查一下股票')).toEqual({ reply: '转场\n', query: '查一下股票' })
+    expect(splitLookup('只有标记 [lookup]')).toEqual({ reply: '只有标记 ', query: null })
+  })
+
+  it('partialLookupMarkerLen 识别不完整前缀', async () => {
+    const { partialLookupMarkerLen } = await import('../src/http/gateway.ts')
+    expect(partialLookupMarkerLen('你好[look')).toBe(5)
+    expect(partialLookupMarkerLen('[')).toBe(1)
+    expect(partialLookupMarkerLen('abc')).toBe(0)
+    expect(partialLookupMarkerLen('xx[lookup]yy')).toBe(0) // 完整标记已出现，由 indexOf 分支处理
+  })
+})

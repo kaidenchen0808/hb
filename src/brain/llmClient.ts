@@ -138,7 +138,7 @@ async function* streamAnthropic(opts: StreamChatOptions): AsyncGenerator<string>
 const CLAUDE_CODE_ALLOWED_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch']
 const CLAUDE_CODE_TIMEOUT_MS = 120_000
 /** 工具调用期间的流式提示语（只插一次，防止长时间无输出像卡死）。 */
-const TOOL_USE_PLACEHOLDER = '（等我查一下哦…）'
+export const TOOL_USE_PLACEHOLDER = '（等我查一下哦…）'
 
 /** 解析 claude -p --output-format stream-json 的一行，返回 assistant 文本；无文本返回 null。纯函数可测。 */
 export function extractClaudeAssistantText(line: string): string | null {

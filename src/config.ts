@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 loadDotenv({ quiet: true })
 
-export type BrainApiFormat = 'openai' | 'anthropic' | 'claude-code'
+export type BrainApiFormat = 'openai' | 'anthropic' | 'claude-code' | 'hybrid'
 
 export interface AppConfig {
   port: number
@@ -17,10 +17,15 @@ export interface AppConfig {
   companionApiKey: string | null
 }
 
-/** 聊天大脑是否就绪：claude-code 只需本机 CLI；直连模式需要完整 BRAIN_* 三项。 */
+/** 聊天大脑是否就绪：claude-code 只需本机 CLI；hybrid/直连需要完整 BRAIN_* 三项。 */
 export function brainReady(c: AppConfig): boolean {
   if (c.brainApiFormat === 'claude-code') return true
   return c.brainBaseUrl !== '' && c.brainApiKey !== '' && c.brainModel !== ''
+}
+
+/** 直连格式推断（hybrid/facts 提取用）：anthropic 端点 ↔ GLM Coding Plan。 */
+export function directFormat(c: AppConfig): 'openai' | 'anthropic' {
+  return c.brainBaseUrl.includes('anthropic') ? 'anthropic' : 'openai'
 }
 
 function readInt(name: string, fallback: number): number {
@@ -39,7 +44,7 @@ function readStr(name: string, fallback = ''): string {
 }
 
 function readBrainFormat(raw: string): BrainApiFormat {
-  if (raw === 'anthropic' || raw === 'claude-code') return raw
+  if (raw === 'anthropic' || raw === 'claude-code' || raw === 'hybrid') return raw
   return 'openai'
 }
 
@@ -63,8 +68,11 @@ export function loadConfig(): AppConfig {
   if (missing.length > 0 && cfg.brainApiFormat !== 'claude-code') {
     console.warn(`[config] 警告: 未配置 ${missing.join(', ')} —— 聊天接口不可用，请参考 .env.example 补齐后重启`)
   }
-  if (cfg.brainApiFormat === 'claude-code' && missing.length > 0) {
-    console.warn('[config] 提示: claude-code 模式下 BRAIN_* 未配全，记忆提取(facts)将跳过（只影响长期记忆，不影响聊天）')
+  if (cfg.brainApiFormat !== 'claude-code' && cfg.brainApiFormat !== 'hybrid' && missing.length > 0) {
+    console.warn('[config] 提示: 该模式下 BRAIN_* 未配全，记忆提取(facts)将跳过（只影响长期记忆，不影响聊天）')
+  }
+  if (cfg.brainApiFormat === 'hybrid' && missing.length > 0) {
+    throw new Error('hybrid 模式需要 BRAIN_* 直连配置（快速聊天通道），请补齐 .env')
   }
   return cfg
 }
