@@ -15,6 +15,8 @@ export interface AppConfig {
   brainModel: string
   brainApiFormat: BrainApiFormat
   companionApiKey: string | null
+  reactionsEnabled: boolean
+  reactionMinIntervalSec: number
 }
 
 /** 聊天大脑是否就绪：claude-code 只需本机 CLI；hybrid/直连需要完整 BRAIN_* 三项。 */
@@ -59,6 +61,8 @@ export function loadConfig(): AppConfig {
     brainModel: readStr('BRAIN_MODEL'),
     brainApiFormat: readBrainFormat(readStr('BRAIN_API_FORMAT', 'openai')),
     companionApiKey: readStr('COMPANION_API_KEY') || null,
+    reactionsEnabled: readStr('REACTIONS_ENABLED', 'true') !== 'false',
+    reactionMinIntervalSec: Math.max(60, Number.parseInt(readStr('REACTION_MIN_INTERVAL_SEC', '900'), 10) || 900),
   }
 
   if (!existsSync(cfg.personaPath)) {

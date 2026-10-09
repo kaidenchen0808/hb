@@ -16,8 +16,12 @@ else
 fi
 
 echo "── 2/4 AniCompanion app"
-if pgrep -f "AniCompanion.app/Contents/MacOS" >/dev/null; then
-  ok "进程在"
+nproc=$(pgrep -f "AniCompanion.app/Contents/MacOS" | wc -l | tr -d ' ')
+if [ "$nproc" -eq 1 ]; then
+  ok "进程在（单实例）"
+elif [ "$nproc" -gt 1 ]; then
+  bad "检测到 $nproc 个实例同时在跑（幽灵副本抢走消息）"
+  hint "killall AniCompanion 后只 open -a AniCompanion；构建目录的副本要用 lsregister -u 注销"
 else
   bad "app 没开"
   hint "open -a AniCompanion"

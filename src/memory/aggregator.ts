@@ -70,12 +70,12 @@ export function buildSessionSummary(agent: string, stats: SessionStats, finalNot
 
 /**
  * Stop 时定稿：把整个 session 的原始事件折叠成一条聚合事件，进入她的视野。
- * 返回生成的 summary；太琐碎返回 null。
+ * 返回 summary 与统计数据（供反应引擎做工作量判断）；太琐碎返回 null。
  */
 export function finalizeSession(
   db: CompanionDb,
   input: { agent: string; session_id: string; finalNote?: string },
-): string | null {
+): { summary: string; stats: SessionStats } | null {
   const rows = sessionEvents(db, input.session_id)
   const stats = summarizeSession(rows)
   if (stats === null) return null
@@ -86,5 +86,5 @@ export function finalizeSession(
     summary,
     details: JSON.stringify(stats),
   })
-  return summary
+  return { summary, stats }
 }

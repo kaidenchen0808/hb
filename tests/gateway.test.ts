@@ -47,6 +47,8 @@ function makeApp(brainReady: boolean): Hono {
     brainModel: brainReady ? 'test-model' : '',
     brainApiFormat: 'openai' as const,
     companionApiKey: null,
+    reactionsEnabled: false, // 测试里关掉，避免 mock 上游被反应生成调用
+    reactionMinIntervalSec: 900,
   }
   const persona = loadPersona(new URL('../persona/persona.yaml', import.meta.url).pathname)
   return createApp({ db, config, persona })

@@ -4,6 +4,7 @@ import { finalizeSession, summarizeSession, buildSessionSummary, type SessionSta
 import { recordRawEvent, type RawEventRow } from '../src/memory/rawEvents.ts'
 import { insertEvent, recentEvents, unconsumedEvents, markAllConsumed } from '../src/memory/eventStore.ts'
 import { insertFacts, parseExtractedFacts, recentFacts } from '../src/memory/facts.ts'
+import { decideReaction, recordReaction } from '../src/memory/reactions.ts'
 import {
   checkStageTransition,
   clearMilestone,
@@ -49,8 +50,9 @@ describe('aggregator', () => {
     for (let i = 0; i < 4; i++) {
       recordRawEvent(db, { agent: 'claude-code', session_id: 's1', hook_type: 'PostToolUse', tool_name: 'Bash' })
     }
-    const summary = finalizeSession(db, { agent: 'claude-code', session_id: 's1' })
-    expect(summary).toContain('跑命令 4 次')
+    const finalized = finalizeSession(db, { agent: 'claude-code', session_id: 's1' })
+    expect(finalized?.summary).toContain('跑命令 4 次')
+    expect(finalized?.stats.eventCount).toBe(4)
     expect(unconsumedEvents(db)).toHaveLength(1)
   })
 })
@@ -139,3 +141,38 @@ function rawRow(id: number, hookType: string, toolName: string): RawEventRow {
     created_at: new Date(Date.now() - (100 - id) * 60000).toISOString(),
   }
 }
+
+
+describe('reaction engine 决策', () => {
+  it('失败事件立即反应', () => {
+    const d = decideReaction(db, { event_type: 'task_failed', agent: 'codex', summary: '构建失败', now: new Date() }, { minIntervalSec: 900, enabled: true })
+    expect(d?.kind).toBe('failure')
+  })
+
+  it('小工作量完成不反应（默默记账）', () => {
+    const d = decideReaction(db, { event_type: 'session_completed', agent: 'claude-code', summary: '改了 2 个文件', stats: { toolCounts: [], durationMs: 60000, eventCount: 3 }, now: new Date() }, { minIntervalSec: 900, enabled: true })
+    expect(d).toBeNull()
+  })
+
+  it('大工作量完成反应 success', () => {
+    const d = decideReaction(db, { event_type: 'session_completed', agent: 'claude-code', summary: '大活', stats: { toolCounts: [], durationMs: 60000, eventCount: 20 }, now: new Date() }, { minIntervalSec: 900, enabled: true })
+    expect(d?.kind).toBe('success')
+  })
+
+  it('全局冷却期内沉默', () => {
+    const now = new Date('2026-09-29T14:00:00Z')
+    decideReaction(db, { event_type: 'task_failed', agent: 'x', summary: '失败', now }, { minIntervalSec: 900, enabled: true })
+    recordReaction(db, 'failure', now)
+    const d2 = decideReaction(db, { event_type: 'task_failed', agent: 'x', summary: '又失败', now: new Date('2026-09-29T14:05:00Z') }, { minIntervalSec: 900, enabled: true })
+    expect(d2).toBeNull()
+  })
+
+  it('深夜反应每晚只一次', () => {
+    const night1 = new Date('2026-09-29T23:30:00')
+    const d1 = decideReaction(db, { event_type: 'session_completed', agent: 'x', summary: '深夜活', stats: { toolCounts: [], durationMs: 0, eventCount: 10 }, now: night1 }, { minIntervalSec: 60, enabled: true })
+    expect(d1?.kind).toBe('lateNight')
+    recordReaction(db, 'lateNight', night1)
+    const d2 = decideReaction(db, { event_type: 'session_completed', agent: 'x', summary: '深夜活', stats: { toolCounts: [], durationMs: 0, eventCount: 10 }, now: new Date('2026-09-30T00:30:00') }, { minIntervalSec: 60, enabled: true })
+    expect(d2).toBeNull()
+  })
+})

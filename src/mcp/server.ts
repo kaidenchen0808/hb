@@ -5,6 +5,9 @@ import type { CompanionDb } from '../db/database.ts'
 import { insertEvent, isEventType, recentEvents } from '../memory/eventStore.ts'
 import { enqueueSay } from '../memory/outbox.ts'
 import { settleAgentPresence } from '../memory/relationship.ts'
+import { decideReaction, recordReaction, FALLBACK_LINES } from '../memory/reactions.ts'
+
+const REACTION_MIN_INTERVAL_SEC = 900
 
 const AGENT_NAME_MAX = 32
 
@@ -36,6 +39,16 @@ export function buildMcpServer(db: CompanionDb): McpServer {
         details: args.details,
       })
       settleAgentPresence(db)
+      // 失败/错误类上报触发她的即时反应（MCP 进程无大脑配置，用兜底台词保证她不缺席）
+      const decision = decideReaction(
+        db,
+        { event_type: args.event_type, agent, summary, now: new Date() },
+        { minIntervalSec: REACTION_MIN_INTERVAL_SEC, enabled: true },
+      )
+      if (decision !== null && (decision.kind === 'failure' || decision.kind === 'lateNight')) {
+        recordReaction(db, decision.kind, new Date())
+        enqueueSay(db, FALLBACK_LINES[decision.kind][0], 'reaction')
+      }
       return { content: [{ type: 'text', text: `已告诉她：${summary}` }] }
     },
   )

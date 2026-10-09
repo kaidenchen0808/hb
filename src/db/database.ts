@@ -65,6 +65,12 @@ const SCHEMA_STATEMENTS = [
     created_at TEXT NOT NULL,
     delivered_at TEXT
   )`,
+
+  `CREATE TABLE IF NOT EXISTS reaction_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
 ]
 
 /** 打开（或创建）数据库，启用 WAL 支持与 HTTP 服务/MCP 进程的并发读写。幂等建表。 */

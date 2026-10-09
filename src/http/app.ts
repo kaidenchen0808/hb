@@ -3,14 +3,52 @@ import type { AppConfig } from '../config.ts'
 import type { CompanionDb } from '../db/database.ts'
 import type { Persona } from '../persona/loader.ts'
 import { handleChatCompletion, type GatewayDeps } from './gateway.ts'
-import { isEventType, recentEvents } from '../memory/eventStore.ts'
+import { insertEvent, isEventType, recentEvents } from '../memory/eventStore.ts'
 import { isHookType, recordRawEvent, type RawEventInput } from '../memory/rawEvents.ts'
 import { finalizeSession } from '../memory/aggregator.ts'
 import { drainOutbox, enqueueSay } from '../memory/outbox.ts'
 import { settleAgentPresence } from '../memory/relationship.ts'
+import { decideReaction, recordReaction, FALLBACK_LINES, type ReactionInput } from '../memory/reactions.ts'
+import { generateReactionLine } from '../brain/reactionGen.ts'
 
 export interface AppDeps extends GatewayDeps {
   // GatewayDeps 已含 db/config/persona
+}
+
+/**
+ * 情绪反应引擎入口：值得开口 → 生成台词 → 发件箱（她 3 秒内开口）。
+ * 生成是异步的（不阻塞 hook 响应），返回决策标记给调用方。
+ */
+function maybeReact(deps: AppDeps, input: ReactionInput): string | null {
+  const { db, config, persona } = deps
+  const decision = decideReaction(db, input, {
+    minIntervalSec: config.reactionMinIntervalSec,
+    enabled: config.reactionsEnabled,
+  })
+  if (decision === null) return null
+  recordReaction(db, decision.kind, input.now)
+  console.log(`[reaction] ${decision.kind}：${decision.reason}`)
+  const brainReadyDirect = config.brainBaseUrl !== '' && config.brainApiKey !== '' && config.brainModel !== ''
+  if (!brainReadyDirect) {
+    // 没配直连大脑：直接用兜底台词，她也不能缺席
+    enqueueSay(db, FALLBACK_LINES[decision.kind][0], 'reaction')
+    return decision.kind
+  }
+  void generateReactionLine(
+    {
+      baseUrl: config.brainBaseUrl,
+      apiKey: config.brainApiKey,
+      model: config.brainModel,
+      apiFormat: config.brainBaseUrl.includes('anthropic') ? 'anthropic' : 'openai',
+    },
+    persona,
+    decision,
+    input,
+  ).then((line) => {
+    enqueueSay(db, line, 'reaction')
+    console.log(`[reaction] 她说: ${line.slice(0, 60)}`)
+  })
+  return decision.kind
 }
 
 export function createApp(deps: AppDeps): Hono {
@@ -68,23 +106,46 @@ export function createApp(deps: AppDeps): Hono {
       payload: body.payload,
     }
     recordRawEvent(db, input)
+
+    // 任务开始感知：UserPromptSubmit（新 session 首个 prompt）→ session_started 进她的视野
+    // 她知道"主人开始了新任务"——不单独开口（避免打扰），供下次聊天/proactive 自然提起
+    if (body.hook_type === 'UserPromptSubmit') {
+      const prompt = typeof (body.payload as { prompt?: unknown } | undefined)?.prompt === 'string'
+        ? String((body.payload as { prompt?: string }).prompt).slice(0, 80)
+        : ''
+      insertEvent(db, {
+        agent: body.agent,
+        event_type: 'session_started',
+        summary: prompt !== '' ? `开始了新任务：${prompt}` : '开始了新任务',
+      })
+    }
     return c.json({ ok: true })
   })
 
-  // Stop 定稿：整个 session 折叠成一条聚合事件进入她的视野
+  // Stop 定稿：整个 session 折叠成一条聚合事件进入她的视野；值得的话触发她的情绪反应
   app.post('/api/aggregate', async (c) => {
     const body = await c.req.json<Record<string, unknown>>().catch(() => null)
     if (body === null || !validAgent(body.agent) || !validSession(body.session_id)) {
       return c.json({ error: { message: '需要 agent, session_id' } }, 400)
     }
     const finalNote = typeof body.final_note === 'string' ? body.final_note.slice(0, 200) : undefined
-    const summary = finalizeSession(db, {
+    const finalized = finalizeSession(db, {
       agent: body.agent,
       session_id: body.session_id,
       finalNote,
     })
-    if (summary !== null) settleAgentPresence(db)
-    return c.json({ ok: true, summary })
+    let reaction: string | null = null
+    if (finalized !== null) {
+      settleAgentPresence(db)
+      reaction = maybeReact(deps, {
+        event_type: 'session_completed',
+        agent: body.agent,
+        summary: finalized.summary,
+        stats: finalized.stats,
+        now: new Date(),
+      })
+    }
+    return c.json({ ok: true, summary: finalized?.summary ?? null, reaction })
   })
 
   app.get('/api/events', (c) => {
@@ -104,6 +165,23 @@ export function createApp(deps: AppDeps): Hono {
     const source = typeof body.source === 'string' ? body.source : 'api'
     const msg = enqueueSay(db, body.text, source)
     return c.json({ ok: true, id: msg.id })
+  })
+
+  // 失败直报（hooks 检测到工具失败时调用）：写 task_failed 并触发她的即时安慰
+  app.post('/api/report-failure', async (c) => {
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null)
+    if (body === null || typeof body.summary !== 'string' || body.summary.trim() === '') {
+      return c.json({ error: { message: '需要 summary' } }, 400)
+    }
+    const agent = typeof body.agent === 'string' && /^[\w.-]{1,32}$/.test(body.agent) ? body.agent : 'claude-code'
+    insertEvent(db, {
+      agent,
+      event_type: 'task_failed',
+      summary: body.summary.trim().slice(0, 200),
+    })
+    settleAgentPresence(db)
+    const reaction = maybeReact(deps, { event_type: 'task_failed', agent, summary: body.summary, now: new Date() })
+    return c.json({ ok: true, reaction })
   })
 
   // AniCompanion 补丁轮询：返回待播消息（取出即投递，at-most-once）
