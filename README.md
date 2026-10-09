@@ -8,19 +8,20 @@
 AniCompanion（她的身体：VRM+语音+表情）◄──3s轮询──┘
 ```
 
-## 安装（一条命令）
+## 安装
+
+**分发（产品主人执行一次）**：`bash scripts/make-bundle.sh` → 得到 `dist/companion-bundle.zip`（约 24MB，含源码+桌宠 App），微信/AirDrop 发给朋友。
+
+**安装（朋友执行）**：
 
 ```bash
-# 零配置版：大脑复用你 claude 的登录态（GLM Coding Plan / Claude 订阅均可）
-bash scripts/install.sh --local ~/path/to/hb
-
-# GLM 用户推荐：秒回模式
-bash scripts/install.sh --glm <你的智谱API key>
+unzip companion-bundle.zip
+bash install.sh                  # 零配置：大脑复用 claude 登录态（GLM Coding Plan / Claude 订阅均可）
+# 或 GLM 用户秒回版：
+bash install.sh --glm <智谱API key>
 ```
 
-装完它会自动：安装桌宠 App（免配置 Settings）→ 注册 hooks + MCP → 写好 .env → 注册 launchd 常驻 → 全链路自检。**然后直接去干活，收工那一刻她会自己开口。**
-
-> 推送 GitHub 后，朋友安装就是：`curl -fsSL https://raw.githubusercontent.com/<you>/hb/main/scripts/install.sh | bash`
+装完它会自动：解压源码到 `~/.companion-layer` → 安装桌宠 App（**免配置 Settings**，defaults 直接写好）→ 注册 hooks + MCP → 写好 .env → launchd 常驻 → 健康检查。**然后直接去干活，收工那一刻她会自己开口。** 全程不需要 GitHub。
 
 ## 她会做什么
 
