@@ -125,6 +125,7 @@ def merge(key, entry):
     if not exists: entries.append(entry)
 merge('PostToolUse', {'matcher': '*', 'hooks': [{'type': 'command', 'command': f'bash {repo}/hooks/report-event.sh PostToolUse'}]})
 merge('UserPromptSubmit', {'hooks': [{'type': 'command', 'command': f'bash {repo}/hooks/report-event.sh UserPromptSubmit'}]})
+merge('SessionStart', {'hooks': [{'type': 'command', 'command': f'bash {repo}/hooks/report-event.sh SessionStart'}]})
 merge('Stop', {'hooks': [{'type': 'command', 'command': f'bash {repo}/hooks/stop-claude.sh'}]})
 settings_path.write_text(json.dumps(settings, ensure_ascii=False, indent=2) + '\n')
 print(f'  hooks 已写入 {settings_path}')

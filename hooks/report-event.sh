@@ -7,8 +7,12 @@ COMPANION_URL="${COMPANION_URL:-http://127.0.0.1:8787}"
 HOOK_TYPE="${1:-PostToolUse}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# 懒启动：她的大脑没跑就拉起（不阻塞，最多花 1 秒探活）
-bash "$SCRIPT_DIR/../scripts/ensure-running.sh" layer
+# 懒启动：她的大脑没跑就拉起；SessionStart（会话启动）时连桌宠一起拉起
+if [ "$HOOK_TYPE" = "SessionStart" ]; then
+  bash "$SCRIPT_DIR/../scripts/ensure-running.sh" both
+else
+  bash "$SCRIPT_DIR/../scripts/ensure-running.sh" layer
+fi
 
 input=$(cat)
 

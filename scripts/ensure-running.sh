@@ -18,7 +18,7 @@ ensure_layer() {
 ensure_app() {
   pgrep -f "AniCompanion.app/Contents/MacOS" >/dev/null 2>&1 && return 0
   mkdir -p "$STAMP_DIR"
-  [ -f /Applications/AniCompanion.app ] || return 0  # 没装就不多事
+  [ -d /Applications/AniCompanion.app ] || return 0  # .app 是目录：没装就不多事（-f 对目录恒假，曾致永不拉起）
   # 10 分钟节流：避免反复打扰刚被手动关掉的用户
   STAMP="$STAMP_DIR/app-launch"
   [ -f "$STAMP" ] && [ $(( $(date +%s) - $(stat -f %m "$STAMP") )) -lt 600 ] && return 0
