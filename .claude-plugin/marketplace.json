@@ -1,0 +1,5 @@
+{
+  "name": "companion",
+  "owner": { "name": "chenxuewei" },
+  "plugins": [{ "name": "pet", "source": "./plugin", "description": "会看着你写代码的桌面女友" }]
+}
