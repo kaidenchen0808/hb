@@ -145,17 +145,17 @@ function rawRow(id: number, hookType: string, toolName: string): RawEventRow {
 
 describe('reaction engine 决策', () => {
   it('失败事件立即反应', () => {
-    const d = decideReaction(db, { event_type: 'task_failed', agent: 'codex', summary: '构建失败', now: new Date() }, { minIntervalSec: 900, enabled: true })
+    const d = decideReaction(db, { event_type: 'task_failed', agent: 'codex', summary: '构建失败', now: new Date('2026-09-29T14:00:00') }, { minIntervalSec: 900, enabled: true })
     expect(d?.kind).toBe('failure')
   })
 
   it('小工作量完成不反应（默默记账）', () => {
-    const d = decideReaction(db, { event_type: 'session_completed', agent: 'claude-code', summary: '改了 2 个文件', stats: { toolCounts: [], durationMs: 60000, eventCount: 3 }, now: new Date() }, { minIntervalSec: 900, enabled: true })
+    const d = decideReaction(db, { event_type: 'session_completed', agent: 'claude-code', summary: '改了 2 个文件', stats: { toolCounts: [], durationMs: 60000, eventCount: 3 }, now: new Date('2026-09-29T14:00:00') }, { minIntervalSec: 900, enabled: true })
     expect(d).toBeNull()
   })
 
   it('大工作量完成反应 success', () => {
-    const d = decideReaction(db, { event_type: 'session_completed', agent: 'claude-code', summary: '大活', stats: { toolCounts: [], durationMs: 60000, eventCount: 20 }, now: new Date() }, { minIntervalSec: 900, enabled: true })
+    const d = decideReaction(db, { event_type: 'session_completed', agent: 'claude-code', summary: '大活', stats: { toolCounts: [], durationMs: 60000, eventCount: 20 }, now: new Date('2026-09-29T14:00:00') }, { minIntervalSec: 900, enabled: true })
     expect(d?.kind).toBe('success')
   })
 
