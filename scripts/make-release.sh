@@ -37,10 +37,14 @@ ditto -c -k --keepParent "$BUILT_DIR/AniCompanion.app" "$DIST/payload/AniCompani
 
 step "冒烟：payload 在隔离目录拉起 /health（payload node + brain bundle 组合验证）"
 # 模拟真实部署布局：payload 内容摊平为安装根（persona/、brain.mjs 与 cwd 同级），而非 payload/ 子目录
+# 注意 cd 必须在后台启动之外：`( cd X && nohup node & )` 会让 $! 指向中间 subshell，kill 不到真正的 node
 SMOKE=$(mktemp -d)
 mkdir "$SMOKE/root"
 cp -R "$DIST/payload/." "$SMOKE/root/"
-( cd "$SMOKE/root" && PORT=18900 nohup ./node brain.mjs >/tmp/brain-release-smoke.log 2>&1 & echo $! > /tmp/brain-release.pid )
+cd "$SMOKE/root"
+PORT=18900 nohup ./node brain.mjs >/tmp/brain-release-smoke.log 2>&1 &
+echo $! > /tmp/brain-release.pid
+cd "$HB_DIR"
 sleep 3
 curl -sf -m 3 http://127.0.0.1:18900/health | grep -q '"status":"ok"' || { kill "$(cat /tmp/brain-release.pid)" 2>/dev/null; die "冒烟失败，看 /tmp/brain-release-smoke.log"; }
 kill "$(cat /tmp/brain-release.pid)" 2>/dev/null || true
