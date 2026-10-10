@@ -14,7 +14,7 @@
 一键安装（推荐，与朋友通道相同）：
 
 ```bash
-claude plugin marketplace add chenxuewei/hb
+claude plugin marketplace add kaidenchen0808/hb
 claude plugin install pet@companion
 ```
 

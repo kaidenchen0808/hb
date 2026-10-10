@@ -13,7 +13,7 @@ AniCompanion（她的身体：VRM+语音+表情）◄──3s轮询──┘
 **朋友安装（两行命令）**：
 
 ```bash
-claude plugin marketplace add chenxuewei/hb
+claude plugin marketplace add kaidenchen0808/hb
 claude plugin install pet@companion
 ```
 

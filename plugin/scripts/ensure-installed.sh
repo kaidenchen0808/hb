@@ -12,7 +12,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPANION_ROOT="${COMPANION_ROOT:-$HOME/.companion-layer}"
-PAYLOAD_BASE="${PAYLOAD_BASE:-https://github.com/chenxuewei/hb/releases/latest/download}"
+PAYLOAD_BASE="${PAYLOAD_BASE:-https://github.com/kaidenchen0808/hb/releases/latest/download}"
 DEFAULT_VERSION="$(cat "$SCRIPT_DIR/../VERSION" 2>/dev/null | tr -d '[:space:]')"
 EXPECT_VERSION="${EXPECT_VERSION:-$DEFAULT_VERSION}"
 LOG="${COMPANION_INSTALL_LOG:-/tmp/companion-install.log}"
