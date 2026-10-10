@@ -41,9 +41,21 @@ function nightKeyOf(d: Date): string {
     : localDateKey(d)
 }
 
+// 收工道别（success）的独立短冷却：只需防连发，不该被其他开口的长冷却挡住
+const FAREWELL_MIN_INTERVAL_SEC = 60
+
+/** 冷却键距今是否还在 intervalSec 内。 */
+function withinCooldown(db: CompanionDb, key: string, now: Date, intervalSec: number): boolean {
+  const lastAt = getState(db, key)
+  if (lastAt === null) return false
+  return (now.getTime() - new Date(lastAt).getTime()) / 1000 < intervalSec
+}
+
 /**
  * 反应决策：值得她立刻开口吗。
- * 节流优先（全局冷却），然后按失败 > 深夜 > 大工作量的优先级判定。
+ * 先按失败 > 深夜 > 大工作量判定类别，再查对应冷却：
+ *   failure / lateNight → 全局冷却（minIntervalSec）
+ *   success（收工道别）→ 独立短冷却，防连发即可
  * 不值得 → null（事件照常进她的视野，下次聊天自然提及）。
  */
 export function decideReaction(
@@ -53,39 +65,42 @@ export function decideReaction(
 ): ReactionDecision | null {
   if (!opts.enabled) return null
 
-  // 全局冷却：上次开口距今不足间隔 → 沉默
-  const lastAt = getState(db, 'last_reaction_at')
-  if (lastAt !== null) {
-    const elapsed = (input.now.getTime() - new Date(lastAt).getTime()) / 1000
-    if (elapsed < opts.minIntervalSec) return null
-  }
-
   // 失败/错误：立即反应（优先级最高——主人遇到挫折时在场才是情绪价值）
+  let candidate: ReactionDecision | null = null
   if (input.event_type === 'task_failed' || input.event_type === 'error') {
-    return { kind: 'failure', reason: 'agent 出错或失败' }
+    candidate = { kind: 'failure', reason: 'agent 出错或失败' }
   }
 
   // 深夜在场：每晚只心疼一次；心疼过之后这一晚对完成类事件保持静默（failure 分支在前面，不受影响）
   const hour = input.now.getHours()
-  if (hour >= LATE_NIGHT.start || hour < LATE_NIGHT.end) {
+  if (candidate === null && (hour >= LATE_NIGHT.start || hour < LATE_NIGHT.end)) {
     if (getState(db, 'last_late_night_date') !== nightKeyOf(input.now)) {
-      return { kind: 'lateNight', reason: `深夜 ${String(hour).padStart(2, '0')} 点还在工作` }
+      candidate = { kind: 'lateNight', reason: `深夜 ${String(hour).padStart(2, '0')} 点还在工作` }
+    } else {
+      return null // 催睡之后当晚不再道别——不说"干得漂亮"鼓励熬夜
     }
-    return null
   }
 
   // 大工作量完成：事件多或耗时长才值得她说一句
-  if (input.event_type === 'session_completed') {
+  if (candidate === null && input.event_type === 'session_completed') {
     const s = input.stats
     const bigWork = s !== undefined && (s.eventCount >= SUCCESS_MIN_EVENTS || s.durationMs >= SUCCESS_MIN_DURATION_MS)
-    if (bigWork) return { kind: 'success', reason: '一轮大工作量完成' }
+    if (bigWork) candidate = { kind: 'success', reason: '一轮大工作量完成' }
   }
 
-  return null
+  if (candidate === null) return null
+  if (candidate.kind === 'success') {
+    return withinCooldown(db, 'last_farewell_at', input.now, FAREWELL_MIN_INTERVAL_SEC) ? null : candidate
+  }
+  return withinCooldown(db, 'last_reaction_at', input.now, opts.minIntervalSec) ? null : candidate
 }
 
-/** 记录本次开口（冷却与深夜去重用）。 */
+/** 记录本次开口（冷却与深夜去重用；道别独立记账，不重置全局冷却）。 */
 export function recordReaction(db: CompanionDb, kind: ReactionKind, now: Date): void {
+  if (kind === 'success') {
+    setState(db, 'last_farewell_at', now.toISOString())
+    return
+  }
   setState(db, 'last_reaction_at', now.toISOString())
   if (kind === 'lateNight') setState(db, 'last_late_night_date', nightKeyOf(now))
 }

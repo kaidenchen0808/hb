@@ -167,6 +167,25 @@ describe('reaction engine 决策', () => {
     expect(d2).toBeNull()
   })
 
+  it('收工道别不受全局冷却影响（failure 刚开口也能道别）', () => {
+    const failAt = new Date('2026-09-29T14:00:00Z')
+    decideReaction(db, { event_type: 'task_failed', agent: 'x', summary: '失败', now: failAt }, { minIntervalSec: 900, enabled: true })
+    recordReaction(db, 'failure', failAt)
+    // 5 分钟后收工：全局冷却还在，但道别走独立通道
+    const d = decideReaction(db, { event_type: 'session_completed', agent: 'x', summary: '大活', stats: { toolCounts: [], durationMs: 60000, eventCount: 20 }, now: new Date('2026-09-29T14:05:00Z') }, { minIntervalSec: 900, enabled: true })
+    expect(d?.kind).toBe('success')
+  })
+
+  it('收工道别自身有短冷却（防连续道别）', () => {
+    const t1 = new Date('2026-09-29T14:00:00Z')
+    decideReaction(db, { event_type: 'session_completed', agent: 'x', summary: '大活', stats: { toolCounts: [], durationMs: 60000, eventCount: 20 }, now: t1 }, { minIntervalSec: 900, enabled: true })
+    recordReaction(db, 'success', t1)
+    const within = decideReaction(db, { event_type: 'session_completed', agent: 'x', summary: '又一个大活', stats: { toolCounts: [], durationMs: 60000, eventCount: 20 }, now: new Date('2026-09-29T14:00:30Z') }, { minIntervalSec: 900, enabled: true })
+    expect(within).toBeNull()
+    const after = decideReaction(db, { event_type: 'session_completed', agent: 'x', summary: '又一个大活', stats: { toolCounts: [], durationMs: 60000, eventCount: 20 }, now: new Date('2026-09-29T14:02:00Z') }, { minIntervalSec: 900, enabled: true })
+    expect(after?.kind).toBe('success')
+  })
+
   it('深夜反应每晚只一次', () => {
     const night1 = new Date('2026-09-29T23:30:00')
     const d1 = decideReaction(db, { event_type: 'session_completed', agent: 'x', summary: '深夜活', stats: { toolCounts: [], durationMs: 0, eventCount: 10 }, now: night1 }, { minIntervalSec: 60, enabled: true })
