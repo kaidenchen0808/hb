@@ -11,11 +11,14 @@
 
 ## Claude Code（全自动 hooks + MCP）
 
-一键安装（推荐）：
+一键安装（推荐，与朋友通道相同）：
 
 ```bash
-bash scripts/install-friend.sh
+claude plugin marketplace add chenxuewei/hb
+claude plugin install pet@companion
 ```
+
+装好后 SessionStart hook 会自动部署 `~/.companion-layer`（node 运行时 + 大脑 + 桌宠 App）。
 
 手工配置：
 

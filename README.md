@@ -10,18 +10,33 @@ AniCompanion（她的身体：VRM+语音+表情）◄──3s轮询──┘
 
 ## 安装
 
-**分发（产品主人执行一次）**：`bash scripts/make-bundle.sh` → 得到 `dist/companion-bundle.zip`（约 24MB，含源码+桌宠 App），微信/AirDrop 发给朋友。
-
-**安装（朋友执行）**：
+**朋友安装（两行命令）**：
 
 ```bash
-unzip companion-bundle.zip
+claude plugin marketplace add chenxuewei/hb
+claude plugin install pet@companion
+```
+
+装完直接开新会话干活——SessionStart hook 后台自动下载部署（GitHub Release，sha256 校验 + 镜像加速 + 并发安全），30~60 秒她会自己出现开口"初次见面"。**零依赖**：不需要 node / jq / git，运行时随包自带；重装升级不丢记忆（`data/` 与 `.env` 保留）。
+
+**微信/AirDrop 兜底通道**（GitHub 不可达时）：兜底 zip 内含 `payload.zip` + `ensure-installed.sh` + `install.sh` 三件套，解压后：
+
+```bash
 bash install.sh                  # 零配置：大脑复用 claude 登录态（GLM Coding Plan / Claude 订阅均可）
 # 或 GLM 用户秒回版：
 bash install.sh --glm <智谱API key>
 ```
 
-装完它会自动：解压源码到 `~/.companion-layer` → 安装桌宠 App（**免配置 Settings**，defaults 直接写好）→ 注册 hooks + MCP → 写好 .env → launchd 常驻 → 健康检查。**然后直接去干活，收工那一刻她会自己开口。** 全程不需要 GitHub。
+**分发（产品主人执行一次）**：`bash scripts/make-release.sh` → 产出 `dist/payload-<ver>.zip`（约 59MB：node 运行时 + 大脑 bundle + 桌宠 App + 人格）并通过隔离冒烟 → `gh release create v<ver> dist/payload-<ver>.zip dist/payload-<ver>.zip.sha256`。
+
+```
+plugin（秒装：hooks/MCP/skill）──SessionStart 后台──→ ensure-installed.sh
+                                                        │ 下载 payload（Release/镜像）→ sha256 → 原子部署 ~/.companion-layer
+                                                        ↓
+你用 Claude Code 干活 ──hooks(全自动)──→ companion-layer（她的灵魂）
+                                            │ 人格 / 记忆 / 好感度 / 反应引擎
+AniCompanion（她的身体：VRM+语音+表情）◄──3s轮询──┘
+```
 
 ## 她会做什么
 
