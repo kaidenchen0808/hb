@@ -17,7 +17,7 @@ DEFAULT_VERSION="$(cat "$SCRIPT_DIR/../VERSION" 2>/dev/null | tr -d '[:space:]')
 EXPECT_VERSION="${EXPECT_VERSION:-$DEFAULT_VERSION}"
 LOG="${COMPANION_INSTALL_LOG:-/tmp/companion-install.log}"
 LOCK_DIR="$COMPANION_ROOT.install.lock"
-LOCK_TTL=600  # 秒：下载最坏情况上界
+LOCK_TTL=1800  # 秒：低速检测下 58M 最坏下载时长的上界（并发第二实例据此判断锁残留）
 FORCE_VERSION=0
 [ "${1:-}" = "--force-version" ] && FORCE_VERSION=1
 
@@ -50,13 +50,18 @@ acquire_lock() {
 acquire_lock || exit 0
 trap 'rm -rf "$LOCK_DIR"' EXIT
 
-# ---------- 下载（直连 → ghproxy 镜像 → 放弃） ----------
+# ---------- 下载（直连 → 镜像依次兜底 → 放弃） ----------
+# 2026-10 实测 ghproxy.com 已停服（返回 HTML 200，sha256 兜底拦截），弃用；现为可用镜像
+MIRRORS="${COMPANION_MIRRORS:-https://gh-proxy.com/ https://ghproxy.net/ https://ghfast.top/}"
 download() { # $1=url $2=dest
-  curl -sfL --connect-timeout 8 --max-time 300 -o "$2" "$1" 2>>"$LOG" && return 0
-  local mirrored="https://ghproxy.com/$1"
-  case "$1" in https://github.com/*)
-    curl -sfL --connect-timeout 8 --max-time 300 -o "$2" "$mirrored" 2>>"$LOG" && return 0 ;;
-  esac
+  # 低速检测替代绝对超时：30s 内平均 <1KB/s 才判死流 —— 58M 大文件慢网不被中途砍断
+  curl -sfL --connect-timeout 8 --speed-limit 1024 --speed-time 30 -o "$2" "$1" 2>>"$LOG" && return 0
+  local m
+  for m in $MIRRORS; do
+    rm -f "$2" # 清掉上一次的半截文件再试，避免拼接污染
+    curl -sfL --connect-timeout 8 --speed-limit 1024 --speed-time 30 -o "$2" "${m}${1}" 2>>"$LOG" && return 0
+  done
+  rm -f "$2"
   return 1
 }
 
@@ -74,7 +79,7 @@ download "$PAYLOAD_BASE/payload-$EXPECT_VERSION.zip" "$ZIP_TMP" || fail "下载�
 download "$PAYLOAD_BASE/payload-$EXPECT_VERSION.zip.sha256" "$SHA_TMP" || fail "下载校验文件失败"
 want_sha="$(awk '{print $1}' "$SHA_TMP")"
 got_sha="$(shasum -a 256 "$ZIP_TMP" | awk '{print $1}')"
-[ "$want_sha" = "$got_sha" ] || { rm -f "$ZIP_TMP"; fail "sha256 不匹配 (want=$want_sha got=$got_sha)"; }
+[ "$want_sha" = "$got_sha" ] || { rm -f "$ZIP_TMP" "$SHA_TMP"; fail "sha256 不匹配 (want=$want_sha got=$got_sha)"; }
 mv -f "$ZIP_TMP" "$ZIP"
 
 # ---------- 部署（保 data/ 与用户 persona/） ----------

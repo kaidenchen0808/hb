@@ -79,6 +79,28 @@ beforeAll(async () => {
       res.end(`${sha}  payload-${VERSION}.zip\n`)
       return
     }
+    // /bad/ 前缀：模拟停服镜像 —— HTTP 200 + HTML body（2026-10 ghproxy.com 事故形状）
+    if (req.url?.startsWith('/bad/')) {
+      res.setHeader('content-type', 'text/html')
+      res.end('<!DOCTYPE html><html><body>service moved</body></html>')
+      return
+    }
+    // /dead/ 前缀：主源 404（模拟 Release 缺文件），逼迫走镜像链
+    if (req.url?.startsWith('/dead/')) {
+      res.statusCode = 404
+      res.end('not found')
+      return
+    }
+    // /mirror/ 前缀：健康的镜像源（zip 与 .sha256 都正确）
+    if (req.url?.startsWith('/mirror/')) {
+      if (req.url.endsWith('.sha256')) {
+        res.end(`${sha}  payload-${VERSION}.zip\n`)
+        return
+      }
+      downloadCount++
+      res.end(readFileSync(zip))
+      return
+    }
     downloadCount++
     res.setHeader('content-type', 'application/zip')
     res.end(readFileSync(zip))
@@ -141,5 +163,37 @@ describe('ensure-installed.sh', () => {
     const res = await runInstaller(env)
     expect(res.status).toBe(0)
     expect(existsSync(join(COMPANION_ROOT, 'node'))).toBe(true)
+  })
+
+  it('下载源返回垃圾 HTML(200)：sha256 兜底拒绝安装，静默失败待重试', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 't-'))
+    rmSync(COMPANION_ROOT, { recursive: true, force: true })
+    mkdirSync(COMPANION_ROOT, { recursive: true })
+    const res = await runInstaller(testEnv(fresh, { PAYLOAD_BASE: `http://127.0.0.1:${port}/bad` }))
+    expect(res.status).toBe(0) // 静默退出，绝不炸会话
+    expect(readFileSync(join(COMPANION_ROOT, '.state'), 'utf8')).toBe('absent')
+    expect(existsSync(join(COMPANION_ROOT, 'node'))).toBe(false) // 垃圾没被部署
+    expect(existsSync(COMPANION_ROOT + '.install.lock')).toBe(false)
+  })
+
+  it('源恢复后下个会话重试：同 root 装成功（自愈）', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 't-'))
+    const res = await runInstaller(testEnv(fresh)) // 好源，state 从 absent 出发
+    expect(res.status).toBe(0)
+    expect(readFileSync(join(COMPANION_ROOT, '.state'), 'utf8')).toBe(`installed:${VERSION}`)
+    expect(existsSync(join(COMPANION_ROOT, 'node'))).toBe(true)
+  })
+
+  it('主源 404：镜像链兜底安装成功（COMPANION_MIRRORS 注入本地镜像）', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 't-'))
+    rmSync(COMPANION_ROOT, { recursive: true, force: true })
+    mkdirSync(COMPANION_ROOT, { recursive: true })
+    const res = await runInstaller(testEnv(fresh, {
+      PAYLOAD_BASE: `http://127.0.0.1:${port}/dead`,
+      COMPANION_MIRRORS: `http://127.0.0.1:${port}/mirror/`,
+    }))
+    expect(res.status).toBe(0)
+    expect(readFileSync(join(COMPANION_ROOT, '.state'), 'utf8')).toBe(`installed:${VERSION}`)
+    expect(existsSync(join(COMPANION_ROOT, 'brain.mjs'))).toBe(true) // 镜像产物已部署
   })
 })
