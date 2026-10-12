@@ -25,6 +25,12 @@ export const TOUCH_LINES: Record<TouchPart, string[]> = {
   ],
 }
 
+/** 触摸配套的肢体动画候选（随机一个；客户端缺 clip 时自动忽略，见 docs/animations.md）。 */
+export const TOUCH_ANIMATIONS: Record<TouchPart, string[]> = {
+  head: ['shy_cover', 'nod'], // 害羞低头 / 享受点头
+  body: ['surprised_step_back', 'head_shake', 'angry_stomp'], // 惊讶 / 无奈 / 连点嗔怪
+}
+
 export function isTouchPart(value: unknown): value is TouchPart {
   return value === 'head' || value === 'body'
 }
@@ -36,18 +42,28 @@ function lastTouchAt(db: CompanionDb): string | null {
   return row?.value ?? null
 }
 
+/** 触摸反应结果：台词 + 配套肢体动画名。 */
+export interface TouchDecision {
+  text: string
+  animation: string
+}
+
 /**
- * 触摸反应决策（含记账）：冷却外 → 记冷却 + 结算好感度（日封顶）+ 返回台词；
+ * 触摸反应决策（含记账）：冷却外 → 记冷却 + 结算好感度（日封顶）+ 返回台词与动画；
  * 冷却内 → null（静默，好感度也不加——连点无任何收益）。
  * 台词走本地池（点击是高频轻互动，秒回比"聪明"重要，不调大脑）。
  */
-export function decideTouch(db: CompanionDb, part: TouchPart, now: Date): string | null {
+export function decideTouch(db: CompanionDb, part: TouchPart, now: Date): TouchDecision | null {
   const last = lastTouchAt(db)
   if (last !== null && (now.getTime() - new Date(last).getTime()) / 1000 < TOUCH_COOLDOWN_SEC) return null
   const nowIso = now.toISOString()
   db.prepare(`INSERT OR REPLACE INTO reaction_state (key, value, updated_at) VALUES ('last_touch_reaction_at', ?, ?)`)
     .run(nowIso, nowIso)
   settleTouchAffinity(db, now)
-  const pool = TOUCH_LINES[part]
-  return pool[Math.floor(Math.random() * pool.length)]
+  const lines = TOUCH_LINES[part]
+  const animations = TOUCH_ANIMATIONS[part]
+  return {
+    text: lines[Math.floor(Math.random() * lines.length)],
+    animation: animations[Math.floor(Math.random() * animations.length)],
+  }
 }

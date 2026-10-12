@@ -9,7 +9,7 @@ import { finalizeSession } from '../memory/aggregator.ts'
 import { drainOutbox, enqueueSay } from '../memory/outbox.ts'
 import { settleAgentPresence } from '../memory/relationship.ts'
 import { decideTouch, isTouchPart } from '../memory/touch.ts'
-import { decideReaction, recordReaction, FALLBACK_LINES, type ReactionInput } from '../memory/reactions.ts'
+import { decideReaction, recordReaction, FALLBACK_LINES, REACTION_ANIMATIONS, type ReactionInput } from '../memory/reactions.ts'
 import { generateReactionLine } from '../brain/reactionGen.ts'
 import type { RealtimeHub } from '../realtime/hub.ts'
 
@@ -35,7 +35,7 @@ function maybeReact(deps: AppDeps, input: ReactionInput): string | null {
   const brainReadyDirect = config.brainBaseUrl !== '' && config.brainApiKey !== '' && config.brainModel !== ''
   if (!brainReadyDirect) {
     // 没配直连大脑：直接用兜底台词，她也不能缺席
-    enqueueSay(db, FALLBACK_LINES[decision.kind][0], 'reaction')
+    enqueueSay(db, FALLBACK_LINES[decision.kind][0], 'reaction', REACTION_ANIMATIONS[decision.kind])
     deps.hub?.notifyEnqueued()
     return decision.kind
   }
@@ -50,7 +50,7 @@ function maybeReact(deps: AppDeps, input: ReactionInput): string | null {
     decision,
     input,
   ).then((line) => {
-    enqueueSay(db, line, 'reaction')
+    enqueueSay(db, line, 'reaction', REACTION_ANIMATIONS[decision.kind])
     deps.hub?.notifyEnqueued()
     console.log(`[reaction] 她说: ${line.slice(0, 60)}`)
   })
@@ -162,14 +162,15 @@ export function createApp(deps: AppDeps): Hono {
 
   // ---- 即时说话通道（AniCompanion 轮询消费） ----
 
-  // 入队一条她立刻要说的话（终端 / Agent / 脚本调用）
+  // 入队一条她立刻要说的话（终端 / Agent / 脚本调用；可选 animation 指定配套肢体动作）
   app.post('/api/say', async (c) => {
     const body = await c.req.json<Record<string, unknown>>().catch(() => null)
     if (body === null || typeof body.text !== 'string' || body.text.trim() === '') {
       return c.json({ error: { message: '需要 text（她要说的台词，可含 [emotion] 标签）' } }, 400)
     }
     const source = typeof body.source === 'string' ? body.source : 'api'
-    const msg = enqueueSay(db, body.text, source)
+    const animation = typeof body.animation === 'string' ? body.animation : undefined
+    const msg = enqueueSay(db, body.text, source, animation)
     deps.hub?.notifyEnqueued()
     return c.json({ ok: true, id: msg.id })
   })
@@ -184,9 +185,9 @@ export function createApp(deps: AppDeps): Hono {
     }
     const line = decideTouch(db, part, new Date())
     if (line !== null) {
-      enqueueSay(db, line, 'touch')
+      enqueueSay(db, line.text, 'touch', line.animation)
       deps.hub?.notifyEnqueued()
-      console.log(`[touch] ${part === 'head' ? '摸头' : '戳身体'} → 她说: ${line.slice(0, 60)}`)
+      console.log(`[touch] ${part === 'head' ? '摸头' : '戳身体'} → 她说: ${line.text.slice(0, 60)}`)
     }
     return c.json({ ok: true, reacted: line !== null })
   })
@@ -214,7 +215,12 @@ export function createApp(deps: AppDeps): Hono {
     const messages = drainOutbox(db)
     c.header('X-Companion-Realtime', '1')
     return c.json({
-      notifications: messages.map((m) => ({ id: String(m.id), text: m.text, source: m.source })),
+      notifications: messages.map((m) => ({
+        id: String(m.id),
+        text: m.text,
+        source: m.source,
+        ...(typeof m.animation === 'string' && m.animation !== '' ? { animation: m.animation } : {}),
+      })),
     })
   })
 

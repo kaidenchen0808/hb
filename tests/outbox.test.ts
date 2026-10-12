@@ -32,6 +32,14 @@ describe('enqueueSay', () => {
     expect(b.id).toBeGreaterThan(a.id)
     expect(a.created_at).toBeTruthy()
   })
+
+  it('可选 animation 随消息存取；不传则为空', () => {
+    enqueueSay(db, '带动作', 'touch', 'shy_cover')
+    enqueueSay(db, '不带动作', 'api')
+    const [a, b] = drainOutbox(db)
+    expect(a.animation).toBe('shy_cover')
+    expect(b.animation == null || b.animation === '').toBe(true)
+  })
 })
 
 describe('drainOutbox', () => {

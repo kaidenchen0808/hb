@@ -23,6 +23,8 @@ export interface SayFrame {
   id: string
   text: string
   source: string
+  /** 可选：说话时配的肢体动画名（客户端没有该 clip 时忽略）。 */
+  animation?: string
 }
 
 export interface CommandFrame {
@@ -93,7 +95,13 @@ export class RealtimeHub {
       const messages = peekOutbox(this.db)
       if (messages.length === 0) return
       for (const m of messages) {
-        const frame: SayFrame = { type: 'say', id: String(m.id), text: m.text, source: m.source }
+        const frame: SayFrame = {
+          type: 'say',
+          id: String(m.id),
+          text: m.text,
+          source: m.source,
+          ...(typeof m.animation === 'string' && m.animation !== '' ? { animation: m.animation } : {}),
+        }
         const raw = JSON.stringify(frame)
         for (const ws of this.clients) if (ws.readyState === ws.OPEN) ws.send(raw)
       }

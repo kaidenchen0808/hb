@@ -63,7 +63,8 @@ const SCHEMA_STATEMENTS = [
     text TEXT NOT NULL,
     source TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    delivered_at TEXT
+    delivered_at TEXT,
+    animation TEXT
   )`,
 
   `CREATE TABLE IF NOT EXISTS reaction_state (
@@ -82,8 +83,18 @@ export function openDb(dbPath: string): CompanionDb {
   for (const ddl of SCHEMA_STATEMENTS) {
     db.prepare(ddl).run()
   }
+  migrateOutboxAnimation(db)
   seedRelationship(db)
   return db
+}
+
+/** outbox.animation 列的幂等迁移（老库升级：列已存在时 prepare 报错忽略）。 */
+function migrateOutboxAnimation(db: CompanionDb): void {
+  try {
+    db.prepare('ALTER TABLE outbox ADD COLUMN animation TEXT').run()
+  } catch {
+    // duplicate column name — 已迁移过
+  }
 }
 
 /** 确保 relationship 单行存在（幂等）。 */

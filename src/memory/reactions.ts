@@ -111,3 +111,10 @@ export const FALLBACK_LINES: Record<ReactionKind, string[]> = {
   success: ['[proud] 忙完这一轮啦？干得漂亮哦主人。去伸个懒腰吧，我看着呢。', '[happy] 你那边收工的动静我听到啦～记得夸夸自己。'],
   lateNight: ['[sleepy] 主人……都这个点了还在写代码呀。再忙也要早点睡哦，我会心疼的。'],
 }
+
+/** 反应配套的肢体动画（AniCompanion 的 clip 名，见其 docs/animations.md；缺 clip 客户端自动忽略）。 */
+export const REACTION_ANIMATIONS: Record<ReactionKind, string> = {
+  failure: 'cheer', // 安慰鼓劲
+  success: 'celebrate', // 收工庆祝
+  lateNight: 'sleepy_yawn', // 劝睡哈欠
+}

@@ -3,7 +3,7 @@ import { openDb, type CompanionDb } from '../src/db/database.ts'
 import { loadPersona } from '../src/persona/loader.ts'
 import { createApp } from '../src/http/app.ts'
 import type { AppConfig } from '../src/config.ts'
-import { decideTouch, TOUCH_LINES, type TouchPart } from '../src/memory/touch.ts'
+import { decideTouch, TOUCH_LINES, TOUCH_ANIMATIONS, type TouchPart } from '../src/memory/touch.ts'
 import { getRelationship } from '../src/memory/relationship.ts'
 import { drainOutbox } from '../src/memory/outbox.ts'
 
@@ -28,18 +28,22 @@ beforeEach(() => {
 })
 
 describe('decideTouch（触摸反应决策）', () => {
-  it('摸头：返回台词池中带表情标签的一句', () => {
+  it('摸头：返回台词池中带表情标签的一句 + 动画候选', () => {
     const line = decideTouch(db, 'head', NOON)
     expect(line).not.toBeNull()
-    expect(TOUCH_LINES.head).toContain(line)
-    expect(line).toMatch(/^\[\w+\]/)
+    expect(TOUCH_LINES.head).toContain(line!.text)
+    expect(line!.text).toMatch(/^\[\w+\]/)
+    expect(TOUCH_ANIMATIONS.head).toContain(line!.animation)
   })
 
-  it('戳身体：台词池与摸头不同', () => {
+  it('戳身体：台词池与摸头不同，动画独立', () => {
     const line = decideTouch(db, 'body', NOON)
     expect(line).not.toBeNull()
-    expect(TOUCH_LINES.body).toContain(line)
-    expect(line).not.toBe(decideTouch(db, 'head', new Date(NOON.getTime() + 10_000)))
+    expect(TOUCH_LINES.body).toContain(line!.text)
+    expect(TOUCH_ANIMATIONS.body).toContain(line!.animation)
+    expect(TOUCH_LINES.head).not.toContain(line!.text)
+    const headLine = decideTouch(db, 'head', new Date(NOON.getTime() + 10_000))
+    expect(line!.text).not.toBe(headLine!.text)
   })
 
   it('冷却内连点静默（防刷屏）', () => {
@@ -90,13 +94,14 @@ describe('POST /api/touch（路由）', () => {
     })
   }
 
-  it('合法 part：入 outbox（source=touch）并返回 reacted true', async () => {
+  it('合法 part：入 outbox（source=touch，带动画）并返回 reacted true', async () => {
     const res = await post({ part: 'head' })
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true, reacted: true })
     const [msg] = drainOutbox(db)
     expect(msg.source).toBe('touch')
     expect(TOUCH_LINES.head).toContain(msg.text)
+    expect(TOUCH_ANIMATIONS.head).toContain(msg.animation)
   })
 
   it('非法/缺失 part 返回 400', async () => {
