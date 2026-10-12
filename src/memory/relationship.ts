@@ -60,6 +60,26 @@ export function settleAgentPresence(db: CompanionDb): void {
   addAffinity(db, WEIGHTS.agentPresence)
 }
 
+/** 触摸互动的每日好感度封顶（狂点摸头无增益——好感度靠真实陪伴积累）。 */
+const TOUCH_AFFINITY_DAILY_CAP = 3
+const TOUCH_AFFINITY_WEIGHT = 0.5
+const TOUCH_MAX_TIMES_PER_DAY = TOUCH_AFFINITY_DAILY_CAP / TOUCH_AFFINITY_WEIGHT // = 6 次
+
+/** 触摸互动的好感度结算：+0.5/次，本地日封顶 3 点好感度。计数存 reaction_state（key 带本地日期）。 */
+export function settleTouchAffinity(db: CompanionDb, now: Date): void {
+  const dateKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`
+  const countKey = `touch_affinity_count_${dateKey}`
+  const row = db.prepare(`SELECT value FROM reaction_state WHERE key = ?`).get(countKey) as
+    | { value: string }
+    | undefined
+  const count = row === undefined ? 0 : Number(row.value)
+  if (count >= TOUCH_MAX_TIMES_PER_DAY) return
+  const nowIso = now.toISOString()
+  db.prepare(`INSERT OR REPLACE INTO reaction_state (key, value, updated_at) VALUES (?, ?, ?)`)
+    .run(countKey, String(count + 1), nowIso)
+  addAffinity(db, TOUCH_AFFINITY_WEIGHT)
+}
+
 /** 阶段跃迁检查：若跨过新阈值则记录 milestone（只记一次），返回待告白指令。 */
 export function checkStageTransition(
   db: CompanionDb,

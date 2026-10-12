@@ -8,6 +8,7 @@ import { isHookType, recordRawEvent, type RawEventInput } from '../memory/rawEve
 import { finalizeSession } from '../memory/aggregator.ts'
 import { drainOutbox, enqueueSay } from '../memory/outbox.ts'
 import { settleAgentPresence } from '../memory/relationship.ts'
+import { decideTouch, isTouchPart } from '../memory/touch.ts'
 import { decideReaction, recordReaction, FALLBACK_LINES, type ReactionInput } from '../memory/reactions.ts'
 import { generateReactionLine } from '../brain/reactionGen.ts'
 import type { RealtimeHub } from '../realtime/hub.ts'
@@ -171,6 +172,23 @@ export function createApp(deps: AppDeps): Hono {
     const msg = enqueueSay(db, body.text, source)
     deps.hub?.notifyEnqueued()
     return c.json({ ok: true, id: msg.id })
+  })
+
+  // 摸她/戳她（AniCompanion 点击角色上报）：人格台词反应，WS 秒推；
+  // 冷却内连点静默（reacted=false），好感度随触摸轻加（日封顶，见 touch.ts）
+  app.post('/api/touch', async (c) => {
+    const body = await c.req.json<Record<string, unknown>>().catch(() => null)
+    const part = isTouchPart(body?.part) ? body.part : null
+    if (part === null) {
+      return c.json({ error: { message: '需要 part: head（摸头）或 body（戳身体）' } }, 400)
+    }
+    const line = decideTouch(db, part, new Date())
+    if (line !== null) {
+      enqueueSay(db, line, 'touch')
+      deps.hub?.notifyEnqueued()
+      console.log(`[touch] ${part === 'head' ? '摸头' : '戳身体'} → 她说: ${line.slice(0, 60)}`)
+    }
+    return c.json({ ok: true, reacted: line !== null })
   })
 
   // 失败直报（hooks 检测到工具失败时调用）：写 task_failed 并触发她的即时安慰
