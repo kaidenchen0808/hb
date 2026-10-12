@@ -5,7 +5,7 @@
 ```
 你用 Claude Code 干活 ──hooks(全自动)──→ companion-layer（她的灵魂）
                                             │ 人格 / 记忆 / 好感度 / 反应引擎
-AniCompanion（她的身体：VRM+语音+表情）◄──3s轮询──┘
+AniCompanion（她的身体：VRM+语音+表情）◄──WS 实时推送(<0.5s)──┘
 ```
 
 ## 安装
@@ -35,7 +35,7 @@ plugin（秒装：hooks/MCP/skill）──SessionStart 后台──→ ensure-in
                                                         ↓
 你用 Claude Code 干活 ──hooks(全自动)──→ companion-layer（她的灵魂）
                                             │ 人格 / 记忆 / 好感度 / 反应引擎
-AniCompanion（她的身体：VRM+语音+表情）◄──3s轮询──┘
+AniCompanion（她的身体：VRM+语音+表情）◄──WS 实时推送(<0.5s)──┘
 ```
 
 ## 她会做什么
@@ -43,12 +43,12 @@ AniCompanion（她的身体：VRM+语音+表情）◄──3s轮询──┘
 | 时刻 | 她的反应 | 延迟 |
 |---|---|---|
 | 你在桌宠聊天框说话 | 正常对话 | 3~5 秒 |
-| 你问天气/资料类问题 | "等我查一下哦～" → 主动报真结果 | 3s + 30~60s |
+| 你问天气/资料类问题 | "等我查一下哦～" → 主动报真结果 | ≈1s + 30~60s |
 | 你开始新任务 | 记在心里（下次聊天会提起） | 静默 |
-| 你干完一轮大活 | 骄傲+提醒休息 | 3 秒 |
-| **你的命令报错** | **安慰（破冷却，永远在场）** | 3~8 秒 |
-| 深夜 23-5 点还在干 | 心疼劝睡（每晚仅一次） | 3 秒 |
-| 终端 `POST /api/say` | 你指定的台词 | ≤3 秒 |
+| 你干完一轮大活 | 骄傲+提醒休息 | ≈1~3 秒 |
+| **你的命令报错** | **安慰（破冷却，永远在场）** | 1~8 秒 |
+| 深夜 23-5 点还在干 | 心疼劝睡（每晚仅一次） | ≈1~3 秒 |
+| 终端 `POST /api/say` | 你指定的台词 | ≤0.5 秒 |
 
 她保持沉默的场景（防骚扰）：小工作量、15 分钟冷却期内、深夜劝过之后。好感度随真实陪伴积累（完全隐藏，靠称呼和语气变化体现），记忆记住你说过的话。
 
@@ -68,4 +68,4 @@ launchctl list | grep companion-layer   # 常驻状态
 
 ## 架构
 
-详见 [docs/architecture.md](docs/architecture.md)。三层：AniCompanion（渲染，fork 带主动开口补丁）↔ companion-layer（本仓库：人格/记忆/反应引擎，OpenAI 兼容网关 + 通知轮询）↔ Agent（Claude Code/OpenCode，hooks + MCP）。大脑 hybrid：直连 GLM 秒回 + `[lookup]` 标记派 claude 代查。
+详见 [docs/architecture.md](docs/architecture.md)。三层：AniCompanion（渲染，fork 带主动开口补丁 + WS 客户端）↔ companion-layer（本仓库：人格/记忆/反应引擎，OpenAI 兼容网关 + WS 实时推送）↔ Agent（Claude Code/OpenCode，hooks + MCP）。大脑 hybrid：直连 GLM 秒回 + `[lookup]` 标记派 claude 代查。

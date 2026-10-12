@@ -4,10 +4,11 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Avatar 层 —— AniCompanion（现成，不改一行代码）          │
+│  Avatar 层 —— AniCompanion（fork：主动开口补丁 + WS 客户端）│
 │  VRM 渲染 / TTS / STT / 唇同步 / 表情 / 桌宠 / proactive │
 └───────────────────────────┬─────────────────────────────┘
-                            │ OpenAI 兼容 SSE（拉模式）
+                            │ 聊天：OpenAI 兼容 SSE（拉模式）
+                            │ 她主动开口：WS 推送 /v1/ws（<0.5s，轮询兜底）
 ┌───────────────────────────┴─────────────────────────────┐
 │  Companion Layer —— 本项目                               │
 │  人格（persona.yaml）/ 工作感知 / 记忆 / 好感度           │
@@ -54,10 +55,14 @@ AniCompanion POST /v1/chat/completions
 - **表情标签**：回复嵌 `[happy]` 等 16 种标签，协议对齐 AniCompanion v0.7.0 的
   `Emotion.swift`（`src/persona/promptBuilder.ts` 的 `EMOTION_TAGS`）。AniCompanion
   升级若调整标签集，需同步这里。
-- **拉模式限制**：Agent 事件无法实时让她开口（app 按请求聊天）。事件落库后由
-  她下次开口（用户提问或 app 的 proactive 触发）自然消费；即时性缺口由
-  `companion_notify`（macOS 通知）补位。Phase 1.5 可考虑给 AniCompanion 加
-  WebSocket 推送（MIT 协议允许改）。
+- **推送通道（WS 实时 + 轮询兜底）**：她的主动开口走 outbox。companion-layer
+  起 `/v1/ws` WebSocket 长连（`src/realtime/hub.ts`）：有新话 <500ms 推送，
+  进程内入队 ~50ms 去抖直达，500ms 定时扫描兜住 MCP 跨进程直写。AniCompanion
+  先 3s 轮询 `/v1/notifications`，见响应头 `X-Companion-Realtime: 1` 即升级
+  长连；断线自动回落轮询并指数退避重连（2s→30s）。协议帧带 `type` 前向兼容
+  （`say` / `command`，后者为 P4 换装等指令预留）。Agent 事件本身仍是拉模式：
+  事件落库后由她下次开口自然消费，即时性缺口由 `companion_notify`（macOS
+  通知）补位。
 
 ## 存储
 

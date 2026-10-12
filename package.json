@@ -20,11 +20,13 @@
     "@modelcontextprotocol/sdk": "^1.12.0",
     "dotenv": "^16.4.7",
     "hono": "^4.6.0",
+    "ws": "^8.22.0",
     "yaml": "^2.7.0",
     "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.2",
     "esbuild": "^0.28.2",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"

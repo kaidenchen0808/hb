@@ -10,9 +10,12 @@ import { drainOutbox, enqueueSay } from '../memory/outbox.ts'
 import { settleAgentPresence } from '../memory/relationship.ts'
 import { decideReaction, recordReaction, FALLBACK_LINES, type ReactionInput } from '../memory/reactions.ts'
 import { generateReactionLine } from '../brain/reactionGen.ts'
+import type { RealtimeHub } from '../realtime/hub.ts'
 
 export interface AppDeps extends GatewayDeps {
   // GatewayDeps 已含 db/config/persona
+  /** WebSocket 实时推送（可选：测试环境不建 hub，生产 index.ts 注入）。 */
+  hub?: RealtimeHub
 }
 
 /**
@@ -32,6 +35,7 @@ function maybeReact(deps: AppDeps, input: ReactionInput): string | null {
   if (!brainReadyDirect) {
     // 没配直连大脑：直接用兜底台词，她也不能缺席
     enqueueSay(db, FALLBACK_LINES[decision.kind][0], 'reaction')
+    deps.hub?.notifyEnqueued()
     return decision.kind
   }
   void generateReactionLine(
@@ -46,6 +50,7 @@ function maybeReact(deps: AppDeps, input: ReactionInput): string | null {
     input,
   ).then((line) => {
     enqueueSay(db, line, 'reaction')
+    deps.hub?.notifyEnqueued()
     console.log(`[reaction] 她说: ${line.slice(0, 60)}`)
   })
   return decision.kind
@@ -164,6 +169,7 @@ export function createApp(deps: AppDeps): Hono {
     }
     const source = typeof body.source === 'string' ? body.source : 'api'
     const msg = enqueueSay(db, body.text, source)
+    deps.hub?.notifyEnqueued()
     return c.json({ ok: true, id: msg.id })
   })
 
@@ -185,8 +191,10 @@ export function createApp(deps: AppDeps): Hono {
   })
 
   // AniCompanion 补丁轮询：返回待播消息（取出即投递，at-most-once）
+  // WS 时代的回落通道：响应头广告实时能力，客户端据此升级长连（见 realtime/hub.ts）
   app.get('/v1/notifications', (c) => {
     const messages = drainOutbox(db)
+    c.header('X-Companion-Realtime', '1')
     return c.json({
       notifications: messages.map((m) => ({ id: String(m.id), text: m.text, source: m.source })),
     })

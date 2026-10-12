@@ -15,23 +15,34 @@ export function enqueueSay(db: CompanionDb, text: string, source = 'api'): Outbo
   const trimmed = text.trim()
   if (trimmed === '') throw new Error('text 不能为空')
   const now = new Date().toISOString()
+  const safeText = trimmed.slice(0, MAX_TEXT_LENGTH)
+  const safeSource = source.slice(0, 32)
   const result = db
     .prepare(`INSERT INTO outbox (text, source, created_at) VALUES (?, ?, ?)`)
-    .run(trimmed.slice(0, MAX_TEXT_LENGTH), source.slice(0, 32), now)
+    .run(safeText, safeSource, now)
   trimBacklog(db)
-  return { id: Number(result.lastInsertRowid), text: trimmed.slice(0, MAX_TEXT_LENGTH), source, created_at: now }
+  return { id: Number(result.lastInsertRowid), text: safeText, source: safeSource, created_at: now }
+}
+
+/** 查看全部未投递消息（不标记）。WS 推送用：先广播、发送成功后才 markDelivered。 */
+export function peekOutbox(db: CompanionDb): OutboxMessage[] {
+  return db
+    .prepare(`SELECT id, text, source, created_at FROM outbox WHERE delivered_at IS NULL ORDER BY id`)
+    .all() as unknown as OutboxMessage[]
+}
+
+/** 批量标记已投递（at-most-once 语义的"消费"动作）。 */
+export function markDelivered(db: CompanionDb, ids: number[]): void {
+  if (ids.length === 0) return
+  const now = new Date().toISOString()
+  const stmt = db.prepare(`UPDATE outbox SET delivered_at = ? WHERE id = ? AND delivered_at IS NULL`)
+  for (const id of ids) stmt.run(now, id)
 }
 
 /** 取走全部未投递消息（at-most-once：取出即标记已投递），返回给 app 轮询端点。 */
 export function drainOutbox(db: CompanionDb): OutboxMessage[] {
-  const rows = db
-    .prepare(`SELECT id, text, source, created_at FROM outbox WHERE delivered_at IS NULL ORDER BY id`)
-    .all() as unknown as OutboxMessage[]
-  if (rows.length > 0) {
-    const now = new Date().toISOString()
-    const stmt = db.prepare(`UPDATE outbox SET delivered_at = ? WHERE id = ?`)
-    for (const r of rows) stmt.run(now, r.id)
-  }
+  const rows = peekOutbox(db)
+  markDelivered(db, rows.map((r) => r.id))
   return rows
 }
 
