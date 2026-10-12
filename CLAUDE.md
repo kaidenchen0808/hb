@@ -43,7 +43,7 @@ src/
 ├── http/gateway.ts   # /v1/chat/completions OpenAI 兼容网关（SSE 透传）
 ├── brain/llmClient.ts      # 大脑客户端（openai / anthropic / claude-code 三模式）
 ├── brain/reactionGen.ts    # 反应引擎（任务完成/报错安慰/深夜劝睡，带冷却）
-├── memory/           # eventStore / aggregator / reactions / relationship / facts / outbox
+├── memory/           # eventStore / aggregator / reactions / relationship / facts / outbox / touch
 ├── realtime/         # WebSocket hub（/v1/ws 实时推送 <500ms，轮询兜底）
 ├── persona/          # loader（persona.yaml）+ promptBuilder（EMOTION_TAGS 16 种表情）
 ├── mcp/              # MCP server（companion_report / get_context / notify）
@@ -62,7 +62,7 @@ tests/                # vitest：gateway / hooks / installer / memory / persona 
 - **双进程共享 SQLite**：HTTP 服务与 MCP 进程（`bin/companion-mcp.js`）同库并发，依赖 WAL，改动数据库代码须保持两入口兼容。
 - **表情标签协议**：回复嵌 `[happy]` 等 16 种标签（`src/persona/promptBuilder.ts` 的 `EMOTION_TAGS`），与 AniCompanion 的 `Emotion.swift` 对齐，两端需同步改。
 - **大脑三种模式**（`.env` 的 `BRAIN_API_FORMAT`）：`openai` / `anthropic`（OpenAI 兼容网关、GLM 等）/ `claude-code`（spawn `claude -p` 只读工具白名单：Read/Glob/Grep/WebSearch/WebFetch——能查不能改）。安全边界：她的"手"永远只读。
-- **防骚扰设计**：反应引擎有小工作量静默、15 分钟冷却、深夜劝睡每晚一次。测试涉及时间敏感逻辑时注意 23-5 点 lateNight 反应会盖过期望值（tests 里有固定白天时刻的先例）。
+- **防骚扰设计**：反应引擎有小工作量静默、15 分钟冷却、深夜劝睡每晚一次。触摸交互（`/api/touch`，AniCompanion 点击角色）独立短冷却 5s 连点静默、好感度每日封顶 3 点。测试涉及时间敏感逻辑时注意 23-5 点 lateNight 反应会盖过期望值（tests 里有固定白天时刻的先例）。
 - **分发链路**：`plugin/`（秒装）→ SessionStart hook 后台 `ensure-installed.sh` 下载 GitHub Release payload（sha256 校验 + 镜像加速）→ 原子部署 `~/.companion-layer`。改 plugin/ 或安装脚本后跑 `tests/installer.test.ts`。
 - **重装不丢记忆**：`data/` 与 `.env` 在升级时保留，安装器逻辑不能动这两处。
 
