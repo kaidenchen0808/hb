@@ -12,7 +12,7 @@ const REACTION_MIN_INTERVAL_SEC = 900
 const AGENT_NAME_MAX = 32
 
 export function buildMcpServer(db: CompanionDb): McpServer {
-  const server = new McpServer({ name: 'companion-layer', version: '0.3.0' })
+  const server = new McpServer({ name: 'companion-layer', version: '0.3.1' })
 
   server.registerTool(
     'companion_report',
