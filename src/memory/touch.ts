@@ -28,7 +28,7 @@ export const TOUCH_LINES: Record<TouchPart, string[]> = {
 /** 触摸配套的肢体动画候选（随机一个；客户端缺 clip 时自动忽略，见 docs/animations.md）。 */
 export const TOUCH_ANIMATIONS: Record<TouchPart, string[]> = {
   head: ['shy_cover', 'nod'], // 害羞低头 / 享受点头
-  body: ['surprised_step_back', 'head_shake', 'angry_stomp'], // 惊讶 / 无奈 / 连点嗔怪
+  body: ['surprised_step_back', 'head_shake', 'angry_stomp', 'come_here'], // 惊讶 / 无奈 / 连点嗔怪 / 朝你招手
 }
 
 export function isTouchPart(value: unknown): value is TouchPart {
