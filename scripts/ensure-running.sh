@@ -23,7 +23,19 @@ ensure_app() {
   STAMP="$STAMP_DIR/app-launch"
   [ -f "$STAMP" ] && [ $(( $(date +%s) - $(stat -f %m "$STAMP") )) -lt 600 ] && return 0
   touch "$STAMP"
-  open -a /Applications/AniCompanion.app 2>/dev/null || true
+  # 拉起 + 确认重试（后台执行，不占 hook 10s 时长）：open 偶发静默失败
+  # （LaunchServices 上下文问题），3 秒未存活重试一次，结果落日志可查
+  (
+    LOG="$STAMP_DIR/app-launch.log"
+    if ! open -a /Applications/AniCompanion.app 2>>"$LOG"; then
+      echo "$(date '+%m-%d %H:%M:%S') open 调用失败" >>"$LOG"
+    fi
+    sleep 3
+    if ! pgrep -f "AniCompanion.app/Contents/MacOS" >/dev/null 2>&1; then
+      echo "$(date '+%m-%d %H:%M:%S') 首次拉起未存活，重试" >>"$LOG"
+      open -a /Applications/AniCompanion.app 2>>"$LOG" || true
+    fi
+  ) >/dev/null 2>&1 &
 }
 
 [ "$MODE" = "layer" ] || [ "$MODE" = "both" ] && ensure_layer
