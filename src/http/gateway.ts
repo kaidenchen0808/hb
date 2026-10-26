@@ -43,6 +43,12 @@ const LOOKUP_GUIDANCE = `
 2. 然后在回复的最末尾另起一行，原样输出：[lookup] 一句话写下要查的问题
 之后会有人帮你查，你拿到结果会再告诉主人。不需要查资料时就正常回答，绝不要输出 [lookup]。`
 
+/** hybrid 模式专属：思考过程主人能看到，必须中文（与 claude-code 模式的 TOOL_GUIDANCE 对齐）。 */
+const THINKING_LANGUAGE_GUIDANCE = `
+
+## 思考的语言
+你的思考过程（thinking）主人是能看到的：始终用中文思考，像自言自语一样自然。`
+
 /** s 的结尾是否是标记的不完整前缀（如 "[look"），返回该前缀长度（0 表示无）。 */
 export function partialLookupMarkerLen(s: string): number {
   for (let i = Math.min(LOOKUP_MARKER.length, s.length); i > 0; i--) {
@@ -138,7 +144,7 @@ export function handleChatCompletion(deps: GatewayDeps) {
         milestoneDirective: milestone ?? undefined,
         missingDirective: missing ?? undefined,
       }) +
-      (config.brainApiFormat === 'hybrid' ? LOOKUP_GUIDANCE : '')
+      (config.brainApiFormat === 'hybrid' ? LOOKUP_GUIDANCE + THINKING_LANGUAGE_GUIDANCE : '')
 
     const upstreamMessages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...chatMessages]
 
@@ -318,7 +324,7 @@ async function lookupAndSay(
         { role: 'system', content: input.systemPrompt },
         {
           role: 'user',
-          content: `主人刚才问你："${input.userQuestion}"，你已经答应他去查了。现在把查到的结果用人设的语气告诉他：一到三句话，以 [emotion] 标签开头，不要提"工具""查询""系统"这些字眼，不要输出链接。要查的问题：${input.query}`,
+          content: `主人刚才问你："${input.userQuestion}"。你已经查到了，现在直接把结果告诉主人：一到三句话说结论（数字/事实要具体），以 [emotion] 标签开头。绝不要再转场（不要说"等我查""马上告诉你"之类的话），不要提"工具""查询""系统"这些字眼，不要输出链接。要查的问题：${input.query}`,
         },
       ],
       apiFormat: 'claude-code',
