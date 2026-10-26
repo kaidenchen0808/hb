@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { homedir } from 'node:os'
+import { accessSync, constants } from 'node:fs'
+import { dirname } from 'node:path'
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
@@ -175,6 +177,30 @@ function buildConversationPrompt(messages: ChatMessage[]): string {
   return `${lines.join('\n\n')}\n\n（请以"你"的身份自然回应最后一条消息）`
 }
 
+/** claude CLI 的常见安装位置（launchd 环境的 PATH 不含用户级 bin，spawn 'claude' 会 ENOENT）。
+ * 顺序即优先级；找不到返回 null，由调用方走原 PATH spawn（保留旧错误形状）。 */
+export function resolveClaudeCli(): string | null {
+  const home = homedir()
+  const candidates = [
+    'claude', // PATH 命中（交互启动的服务进程）
+    `${home}/.claude/local/claude`,
+    `${home}/.npm-global/bin/claude`,
+    `${home}/.local/bin/claude`,
+    `${home}/.bun/bin/claude`,
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ]
+  for (const c of candidates) {
+    try {
+      accessSync(c, constants.X_OK)
+      return c
+    } catch {
+      // 继续探测下一个
+    }
+  }
+  return null
+}
+
 /** claude-code 模式专属：让模型知道自己有工具可用（人格 prompt 里没有这段）。 */
 const TOOL_GUIDANCE = `
 
@@ -191,8 +217,14 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
   const prompt = buildConversationPrompt(opts.messages)
   const id = crypto.randomUUID()
 
+  // launchd 拉起的服务进程 PATH 不含用户级 bin（~/.npm-global 等），裸 'claude' 会 ENOENT
+  // —— 逐个常见安装位置探测出绝对路径；同时把它的目录补进子进程 PATH（claude 自身还要 node）。
+  const claudeBin = resolveClaudeCli()
+  if (claudeBin === null) {
+    throw new LlmUnavailableError('claude CLI 启动失败（是否已安装并在 PATH?）: 所有常见安装位置均未找到')
+  }
   const child = spawn(
-    'claude',
+    claudeBin,
     [
       '-p',
       '--output-format', 'stream-json',
@@ -200,7 +232,11 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
       '--system-prompt', (system === '' ? 'You are a helpful assistant.' : system) + TOOL_GUIDANCE,
       '--allowedTools', CLAUDE_CODE_ALLOWED_TOOLS.join(','),
     ],
-    { cwd: homedir(), env: process.env, stdio: ['pipe', 'pipe', 'pipe'] },
+    {
+      cwd: homedir(),
+      env: { ...process.env, PATH: `${dirname(claudeBin)}:${process.env.PATH ?? ''}` },
+      stdio: ['pipe', 'pipe', 'pipe'] as const,
+    },
   )
 
   let stderrText = ''

@@ -128,6 +128,9 @@ cat > "$PLIST" <<EOF
   <key>ProgramArguments</key><array>
     <string>$NODE_BIN</string><string>$COMPANION_ROOT/brain.mjs</string>
   </array>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin:$HOME/.claude/local:$HOME/.local/bin:$HOME/.bun/bin</string>
+  </dict>
   <key>WorkingDirectory</key><string>$COMPANION_ROOT</string>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
