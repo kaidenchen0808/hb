@@ -124,8 +124,14 @@ async function* streamAnthropic(opts: StreamChatOptions): AsyncGenerator<string>
   const id = crypto.randomUUID()
   for await (const data of sseDataLines(res)) {
     try {
-      const evt = JSON.parse(data) as { type?: string; delta?: { type?: string; text?: string } }
-      if (evt.type === 'content_block_delta' && evt.delta?.type === 'text_delta' && typeof evt.delta.text === 'string') {
+      const evt = JSON.parse(data) as { type?: string; delta?: { type?: string; text?: string; thinking?: string } }
+      if (evt.type !== 'content_block_delta' || evt.delta === undefined) continue
+      // GLM-5.x / Claude 的思考流（thinking_delta，token 级增量）→ reasoning 通道
+      if (evt.delta.type === 'thinking_delta' && typeof evt.delta.thinking === 'string') {
+        yield wrapAsReasoningChunk(id, opts.model, evt.delta.thinking)
+        continue
+      }
+      if (evt.delta.type === 'text_delta' && typeof evt.delta.text === 'string') {
         yield wrapAsChunk(id, opts.model, evt.delta.text)
       }
     } catch {
