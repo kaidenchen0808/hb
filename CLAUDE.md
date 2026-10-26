@@ -11,7 +11,7 @@ pnpm start           # 启动服务（node 原生跑 TS，需 Node >= 23.6）
 pnpm run dev         # --watch 开发模式
 pnpm run build:brain # esbuild bundle 出 dist/brain.mjs + dist/brain-mcp.mjs（分发用）
 
-bash scripts/check.sh          # 四环节自检（她没反应时排查）
+bash scripts/check.sh          # 五环节自检（她没反应时排查）
 bash scripts/make-release.sh   # 打 Release payload（产品主人执行，含隔离冒烟）
 tail -f /tmp/companion.log     # 运行时服务日志
 ```
@@ -61,7 +61,8 @@ tests/                # vitest：gateway / hooks / installer / memory / persona 
 - **零编译开发**：ESM + Node ≥23.6 原生跑 `.ts`，无 tsc 构建步骤；分发时才 esbuild bundle。
 - **双进程共享 SQLite**：HTTP 服务与 MCP 进程（`bin/companion-mcp.js`）同库并发，依赖 WAL，改动数据库代码须保持两入口兼容。
 - **表情标签协议**：回复嵌 `[happy]` 等 16 种标签（`src/persona/promptBuilder.ts` 的 `EMOTION_TAGS`），与 AniCompanion 的 `Emotion.swift` 对齐，两端需同步改。
-- **大脑三种模式**（`.env` 的 `BRAIN_API_FORMAT`）：`openai` / `anthropic`（OpenAI 兼容网关、GLM 等）/ `claude-code`（spawn `claude -p` 只读工具白名单：Read/Glob/Grep/WebSearch/WebFetch——能查不能改）。安全边界：她的"手"永远只读。
+- **大脑三种模式**（`.env` 的 `BRAIN_API_FORMAT`）：`openai` / `anthropic`（OpenAI 兼容网关、GLM 等）/ `claude-code`（spawn `claude -p` 只读工具白名单：Read/Glob/Grep/WebSearch/WebFetch——能查不能改）。安全边界：她的"手"永远只读。claude-code 模式两个坑：**launchd 进程 PATH 无用户级 bin，`resolveClaudeCli()` 探测 `~/.npm-global` 等常见安装位**（plist 也注入 PATH 双保险）；thinking 块字段名是 `thinking` 非 `text`。
+- **推理过程通道**：claude-code 大脑的 thinking 块 → 网关透传 `delta.reasoning_content`（DeepSeek 通行标准）→ AniCompanion 折叠面板展示并持久化。**不进**正文/TTS/上下文/结算——gateway 的 `[lookup]` 感知循环里 reasoning chunk 必须在 `extractDelta` 判空前透传（否则被静默丢弃）。
 - **防骚扰设计**：反应引擎有小工作量静默、15 分钟冷却、深夜劝睡每晚一次。触摸交互（`/api/touch`，AniCompanion 点击角色）独立短冷却 5s 连点静默、好感度每日封顶 3 点。测试涉及时间敏感逻辑时注意 23-5 点 lateNight 反应会盖过期望值（tests 里有固定白天时刻的先例）。
 - **台词+动画联合决策**：outbox 消息与 WS say 帧带可选 `animation`（AniCompanion 的 clip 名，缺 clip 客户端静默忽略）。触摸/情绪反应的动画映射见 `touch.ts` / `reactions.ts`；26 动作全集清单在 anicompanion 的 `docs/animations.md`。
 - **分发链路**：`plugin/`（秒装）→ SessionStart hook 后台 `ensure-installed.sh` 下载 GitHub Release payload（sha256 校验 + 镜像加速）→ 原子部署 `~/.companion-layer`。改 plugin/ 或安装脚本后跑 `tests/installer.test.ts`。
@@ -73,7 +74,7 @@ Swift 6 / SwiftUI 的 macOS 渲染端（VRM + TTS + STT + 桌宠），是上游�
 
 ## 运维速查
 
-- 她没反应：`bash scripts/check.sh` 四环节诊断（服务/大脑/人格/渲染端）。
+- 她没反应：`bash scripts/check.sh` 五环节诊断（服务/app/轮询/大脑直连/真实聊天——第 5 环节断言回复非降级文案，防"ENOENT 只剩兜底话术"这类假活）。
 - 服务日志：`/tmp/companion.log`；安装日志：`/tmp/companion-install.log`。
 - 常驻状态：`launchctl list | grep companion-layer`。
 - 换名字/性格：编辑 `persona/persona.yaml` 后重启服务。
