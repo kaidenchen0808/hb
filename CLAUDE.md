@@ -30,7 +30,7 @@ Agent（Claude Code / OpenCode / Codex）
 
 核心数据流：
 - **Agent 干活 → 她知道**：PostToolUse hook `POST /api/events` → raw_events（归档）；Stop hook `POST /api/aggregate` → 聚合器折叠成 agent_events（她的视野）；MCP `companion_report` 直进 agent_events。
-- **她开口**：AniCompanion `POST /v1/chat/completions` → 丢弃 app 自带 system、组装 persona + 表情协议 + 关系阶段语气 + 未消费事件 + facts 记忆 → 代理到 BRAIN_BASE_URL，SSE 原样透传 → 流结束后结算好感度、异步提取 facts。
+- **她开口**：AniCompanion `POST /v1/chat/completions` → 丢弃 app 自带 system、组装 persona + 表情协议 + 关系阶段语气 + 未消费事件 + facts 记忆（+ 可选 `skills` 字段：app 的 `/` 技能面板选中项，本轮拼进 system 后段，单截 4000/合计 8000，不进消息序列/落库/facts）→ 代理到 BRAIN_BASE_URL，SSE 原样透传 → 流结束后结算好感度、异步提取 facts（双层去重：prompt 带已有记忆 + 2-gram 包含性判定）。
 - **好感度**：完全隐藏（无 UI 无数值不扣分），行为信号累加跨 persona.yaml 阶段阈值（stranger→familiar→close→soulmate），里程碑注入告白指令；≥3 天未互动注入"想念"。**去重**：相同 lastUser 3 分钟窗口内只结算一次（gateway.ts 的 `recentAffinitySettles`——客户端"重新生成"原样重发同一句话不重复加分；落库/记忆照常）。
 
 ## 目录结构
