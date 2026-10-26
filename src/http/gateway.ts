@@ -5,7 +5,7 @@ import type { CompanionDb } from '../db/database.ts'
 import type { Persona } from '../persona/loader.ts'
 import { stageForAffinity } from '../persona/loader.ts'
 import { buildContextBlock, buildSystemPrompt } from '../persona/promptBuilder.ts'
-import { extractDelta, LlmUnavailableError, streamChatCompletion, TOOL_USE_PLACEHOLDER, wrapAsChunk, type ChatMessage } from '../brain/llmClient.ts'
+import { extractDelta, extractReasoning, LlmUnavailableError, streamChatCompletion, TOOL_USE_PLACEHOLDER, wrapAsChunk, type ChatMessage } from '../brain/llmClient.ts'
 import { unconsumedEvents, markAllConsumed } from '../memory/eventStore.ts'
 import { recentFacts, extractFacts, insertFacts } from '../memory/facts.ts'
 import { enqueueSay } from '../memory/outbox.ts'
@@ -170,6 +170,11 @@ export function handleChatCompletion(deps: GatewayDeps) {
           signal: c.req.raw.signal,
           apiFormat: chatApiFormat,
         })) {
+          // 推理过程 chunk：原样透传（不参与 [lookup] 标记感知，也不计入 assistantText 结算）
+          if (extractReasoning(data) !== '') {
+            await stream.writeSSE({ data })
+            continue
+          }
           const delta = extractDelta(data)
           if (delta === '') continue
           assistantText += delta

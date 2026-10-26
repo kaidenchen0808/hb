@@ -159,6 +159,25 @@ export function extractClaudeAssistantText(line: string): string | null {
   return text === '' ? null : text
 }
 
+/** 解析同上的一行，返回 assistant 的 thinking（推理过程）块文本；无则 null。纯函数可测。
+ *  claude 的 stream-json 里 thinking 整块到达（非 token 流）；块的字段名是 `thinking`
+ *  （实测键：type/thinking/signature——不是 text 块的 text）。 */
+export function extractClaudeThinking(line: string): string | null {
+  let evt: unknown
+  try {
+    evt = JSON.parse(line)
+  } catch {
+    return null
+  }
+  const e = evt as { type?: string; message?: { content?: unknown } }
+  if (e.type !== 'assistant' || !Array.isArray(e.message?.content)) return null
+  const thinking = (e.message!.content as { type: string; thinking?: string }[])
+    .filter((b) => b.type === 'thinking' && typeof b.thinking === 'string' && b.thinking !== '')
+    .map((b) => b.thinking)
+    .join('\n\n')
+  return thinking === '' ? null : thinking
+}
+
 /** 该行是否含 tool_use 块（用于插入"查一下"占位）。纯函数可测。 */
 export function claudeLineHasToolUse(line: string): boolean {
   try {
@@ -279,6 +298,9 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
         placeholderSent = true
         yield wrapAsChunk(id, opts.model === '' ? 'claude-code' : opts.model, TOOL_USE_PLACEHOLDER)
       }
+      // 推理过程（thinking 块整块先于正文到达）→ reasoning_content chunk，app 端折叠展示
+      const thinking = extractClaudeThinking(line)
+      if (thinking !== null) yield wrapAsReasoningChunk(id, opts.model === '' ? 'claude-code' : opts.model, thinking)
       const text = extractClaudeAssistantText(line)
       if (text !== null) yield wrapAsChunk(id, opts.model === '' ? 'claude-code' : opts.model, text)
     }
@@ -310,6 +332,18 @@ export function extractDelta(dataPayload: string): string {
   }
 }
 
+/** 抽 chunk 的推理增量（delta.reasoning_content）；非 reasoning chunk 返回空串。 */
+export function extractReasoning(dataPayload: string): string {
+  try {
+    const obj = JSON.parse(dataPayload) as {
+      choices?: { delta?: { reasoning_content?: string } }[]
+    }
+    return obj.choices?.[0]?.delta?.reasoning_content ?? ''
+  } catch {
+    return ''
+  }
+}
+
 /** 组装一条标准的 OpenAI 流式 chunk。 */
 export function wrapAsChunk(id: string, model: string, content: string): string {
   return JSON.stringify({
@@ -318,5 +352,17 @@ export function wrapAsChunk(id: string, model: string, content: string): string 
     created: Math.floor(Date.now() / 1000),
     model,
     choices: [{ index: 0, delta: { content }, finish_reason: null }],
+  })
+}
+
+/** 推理过程 chunk（DeepSeek 通行标准 delta.reasoning_content）。只读 delta.content 的
+ *  传统消费者（facts/reactionGen 的 extractDelta）拿到 undefined 自然忽略——零破坏。 */
+export function wrapAsReasoningChunk(id: string, model: string, reasoning: string): string {
+  return JSON.stringify({
+    id,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }],
   })
 }
