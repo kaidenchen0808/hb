@@ -91,6 +91,22 @@ SRC="$STAGE/payload"
 mkdir -p "$COMPANION_ROOT/data" "$COMPANION_ROOT/persona"
 cp -f "$SRC/node" "$COMPANION_ROOT/node" && chmod +x "$COMPANION_ROOT/node"
 cp -f "$SRC/brain.mjs" "$SRC/brain-mcp.mjs" "$COMPANION_ROOT/"
+
+# ---------- node 运行时决策：payload 优先，猎杀/损坏时回落系统 node ----------
+# 2026-10-25 实测 macOS 26 曾对 cp -f 新部署的 node 二进制 SIGKILL(137)（根因未明，
+# 现已不复现）。部署后实跑验证：payload node 起不来且系统有 node 时用系统 node 兜底，
+# 保证发新版本不会让服务在新机器上变砖。
+NODE_BIN="$COMPANION_ROOT/node"
+if ! "$NODE_BIN" --version >/dev/null 2>&1; then
+  log "payload node 不可运行（exit=$?），尝试系统 node 兜底"
+  SYS_NODE="$(command -v node || true)"
+  if [ -n "$SYS_NODE" ] && "$SYS_NODE" --version >/dev/null 2>&1; then
+    NODE_BIN="$SYS_NODE"
+    log "回落系统 node: $SYS_NODE"
+  else
+    fail "无可用 node 运行时（payload 损坏且系统无 node）"
+  fi
+fi
 printf '%s\n' "$EXPECT_VERSION" > "$COMPANION_ROOT/VERSION"
 [ -f "$COMPANION_ROOT/persona/persona.yaml" ] || cp -f "$SRC/persona/persona.yaml" "$COMPANION_ROOT/persona/persona.yaml"
 # .env：存在则保留（用户配的 GLM key 不丢）
@@ -110,7 +126,7 @@ cat > "$PLIST" <<EOF
 <plist version="1.0"><dict>
   <key>Label</key><string>companion-layer</string>
   <key>ProgramArguments</key><array>
-    <string>$COMPANION_ROOT/node</string><string>$COMPANION_ROOT/brain.mjs</string>
+    <string>$NODE_BIN</string><string>$COMPANION_ROOT/brain.mjs</string>
   </array>
   <key>WorkingDirectory</key><string>$COMPANION_ROOT</string>
   <key>RunAtLoad</key><true/>

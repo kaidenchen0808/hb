@@ -11,8 +11,14 @@ MODE="${1:-both}"
 
 ensure_layer() {
   curl -s -m 1 "$COMPANION_URL/health" 2>/dev/null | grep -q '"status":"ok"' && return 0
-  # 没跑：拉起（后台、不阻塞 hook；payload 自带 node，不依赖系统 node）
-  (cd "$COMPANION_ROOT" && nohup "$COMPANION_ROOT/node" "$COMPANION_ROOT/brain.mjs" >> /tmp/companion.log 2>&1 &)
+  # 没跑：拉起（后台、不阻塞 hook）。node 决策与 ensure-installed 一致：
+  # payload node 优先，被猎杀/损坏（--version 失败）时回落系统 node。
+  local node_bin="$COMPANION_ROOT/node"
+  if ! "$node_bin" --version >/dev/null 2>&1; then
+    SYS_NODE="$(command -v node || true)"
+    [ -n "$SYS_NODE" ] && "$SYS_NODE" --version >/dev/null 2>&1 && node_bin="$SYS_NODE"
+  fi
+  (cd "$COMPANION_ROOT" && nohup "$node_bin" "$COMPANION_ROOT/brain.mjs" >> /tmp/companion.log 2>&1 &)
 }
 
 ensure_app() {

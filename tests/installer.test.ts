@@ -15,11 +15,11 @@ let server: Server
 let port = 0
 let downloadCount = 0
 
-function makePayloadZip(dir: string): string {
+function makePayloadZip(dir: string, nodeScript = '#!/bin/sh\necho fake-node\n'): string {
   const payloadDir = join(dir, 'payload')
   mkdirSync(join(payloadDir, 'persona'), { recursive: true })
-  // 假 node：可执行脚本，识别自己
-  writeFileSync(join(payloadDir, 'node'), '#!/bin/sh\necho fake-node\n')
+  // 假 node：可执行脚本，识别自己（可注入"被猎杀"变体：exit 137）
+  writeFileSync(join(payloadDir, 'node'), nodeScript)
   chmodSync(join(payloadDir, 'node'), 0o755)
   writeFileSync(join(payloadDir, 'brain.mjs'), '// fake brain\n')
   writeFileSync(join(payloadDir, 'brain-mcp.mjs'), '// fake mcp\n')
@@ -74,7 +74,19 @@ beforeAll(async () => {
   COMPANION_ROOT = join(staging, 'root')
   const zip = makePayloadZip(staging)
   const sha = zipSha256(zip)
+  // 坏 node 变体：模拟 macOS 26 猎杀形状（起进程即死）
+  const brokenZip = makePayloadZip(join(staging, 'broken'), '#!/bin/sh\nexit 137\n')
+  const brokenSha = zipSha256(brokenZip)
   server = createServer((req, res) => {
+    // /broken/ 前缀：node 被猎杀的 payload（须在通用 .sha256 分支前，zip 与 sha 都用 broken 版）
+    if (req.url?.startsWith('/broken/')) {
+      if (req.url.endsWith('.sha256')) {
+        res.end(`${brokenSha}  payload-${VERSION}.zip\n`)
+        return
+      }
+      res.end(readFileSync(brokenZip))
+      return
+    }
     if (req.url?.endsWith('.sha256')) {
       res.end(`${sha}  payload-${VERSION}.zip\n`)
       return
@@ -123,6 +135,24 @@ describe('ensure-installed.sh', () => {
     const fakePlist = join(fresh, 'home', 'Library', 'LaunchAgents', 'companion-layer.plist')
     expect(existsSync(fakePlist)).toBe(true)
     expect(readFileSync(fakePlist, 'utf8')).toContain('brain.mjs')
+    // payload node 可运行（假 node --version echo 成功）→ plist 指向 payload node
+    expect(readFileSync(fakePlist, 'utf8')).toContain(`${COMPANION_ROOT}/node`)
+  })
+
+  it('node 猎杀兜底：payload node 起不来时 plist 回落系统 node', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 't-'))
+    rmSync(join(COMPANION_ROOT, '.state'), { force: true }) // 复位状态，模拟"未安装"起点
+    const env = testEnv(fresh, { PAYLOAD_BASE: `http://127.0.0.1:${port}/broken` })
+    const res = await runInstaller(env)
+    expect(res.status).toBe(0)
+    expect(existsSync(join(COMPANION_ROOT, 'brain.mjs'))).toBe(true)
+    const fakePlist = join(fresh, 'home', 'Library', 'LaunchAgents', 'companion-layer.plist')
+    const plistContent = readFileSync(fakePlist, 'utf8')
+    // payload node 已部署但不可运行 → plist 应改用系统 node（测试进程的 node）
+    expect(plistContent).not.toContain(`${COMPANION_ROOT}/node`)
+    expect(plistContent).toContain('node')
+    const sysNode = execFileSync('sh', ['-c', 'command -v node']).toString().trim()
+    expect(plistContent).toContain(sysNode)
   })
 
   it('同版本快路径：不发下载请求，毫秒返回', async () => {
