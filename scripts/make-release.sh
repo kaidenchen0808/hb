@@ -53,6 +53,17 @@ step "打包 + sha256"
 ( cd "$DIST" && rm -f "payload-$VER.zip" "payload-$VER.zip.sha256" && zip -q -r "payload-$VER.zip" payload )
 shasum -a 256 "$DIST/payload-$VER.zip" | awk '{print $1"  payload-'$VER'.zip"}' > "$DIST/payload-$VER.zip.sha256"
 rm -rf "$DIST/payload"
+
+step "校验 payload 内 App 版本（防构建目录陈旧——2026-10-27 v0.4.8 事故：payload 里是落后三版的 App）"
+APP_EXPECT="$(grep -m1 'MARKETING_VERSION' "$HB_DIR/anicompanion/project.yml" | sed 's/.*"\([^"]*\)".*/\1/')"
+APP_TMP=$(mktemp -d)
+unzip -q -p "$DIST/payload-$VER.zip" payload/AniCompanion.app.zip > "$APP_TMP/app.zip"
+unzip -q -o "$APP_TMP/app.zip" -d "$APP_TMP"
+APP_GOT="$(plutil -extract CFBundleShortVersionString raw "$APP_TMP/AniCompanion.app/Contents/Info.plist" 2>/dev/null || echo '读取失败')"
+rm -rf "$APP_TMP"
+echo "  project.yml 声明: $APP_EXPECT | payload 实际: $APP_GOT"
+[ "$APP_EXPECT" = "$APP_GOT" ] || die "payload 内 App 版本($APP_GOT) ≠ project.yml($APP_EXPECT)——构建目录陈旧，请清 DerivedData 全新构建后重跑"
+
 echo "✅ $DIST/payload-$VER.zip ($(du -h "$DIST/payload-$VER.zip" | cut -f1))"
 echo "发布：gh release create v$VER $DIST/payload-$VER.zip $DIST/payload-$VER.zip.sha256"
 echo "微信兜底包：payload-$VER.zip 改名 payload.zip，与 plugin/scripts/ensure-installed.sh、install.sh 同目录打 zip"
