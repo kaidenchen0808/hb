@@ -76,6 +76,42 @@ export function buildSkillSection(skills: Array<{ name: string; content: string 
   return `\n\n## 本轮启用的技能\n主人从技能面板选中了以下技能，本轮对话请按这些技能的方法论与口吻回答：\n\n${parts}`
 }
 
+/** 代查结果解析：约定 JSON {result, sources:[{title,url}]}。容错——解析失败整段当
+ *  result、来源空（模型偶尔包 markdown 代码块或输出纯文本，永不因格式丢内容）。 */
+export function parseLookupResult(raw: string): { result: string; sources: Array<{ title: string; url: string }> } {
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    try {
+      const parsed = JSON.parse(text.slice(start, end + 1)) as {
+        result?: unknown
+        sources?: unknown
+      }
+      const result = typeof parsed.result === 'string' ? parsed.result.trim() : ''
+      const sources = Array.isArray(parsed.sources)
+        ? parsed.sources
+            .map((s) => s as { title?: unknown; url?: unknown })
+            .filter((s) => typeof s.url === 'string' && /^https?:\/\//.test(s.url))
+            .map((s) => ({ title: typeof s.title === 'string' && s.title !== '' ? s.title : String(s.url), url: String(s.url) }))
+            .slice(0, 5)
+        : []
+      if (result !== '') return { result, sources }
+    } catch {
+      // 落到纯文本兜底
+    }
+  }
+  return { result: text, sources: [] }
+}
+
+/** 来源列表附在补说文本末尾的固定格式。app 端：Markdown 渲染可点；TTS 前由
+ *  MarkdownStripper 之后的处理剥掉 "---- 来源 ----" 起的整段（URL 不朗读）。 */
+export function formatSourcesBlock(sources: Array<{ title: string; url: string }>): string {
+  if (sources.length === 0) return ''
+  const lines = sources.map((s, i) => `${i + 1}. [${s.title}](${s.url})`).join('\n')
+  return `\n\n---- 来源 ----\n${lines}`
+}
+
 /** s 的结尾是否是标记的不完整前缀（如 "[look"），返回该前缀长度（0 表示无）。 */
 export function partialLookupMarkerLen(s: string): number {
   for (let i = Math.min(LOOKUP_MARKER.length, s.length); i > 0; i--) {
@@ -100,6 +136,8 @@ export interface GatewayDeps {
   db: CompanionDb
   config: AppConfig
   persona: Persona
+  /** WebSocket 实时推送（可选：测试环境不建 hub，生产注入；代查状态帧经此广播）。 */
+  hub?: import('../realtime/hub.ts').RealtimeHub
 }
 
 interface IncomingMessage {
@@ -339,38 +377,79 @@ function settleAfterChat(
 }
 
 /** hybrid 二段查询：spawn claude 代查，结果入发件箱让她主动开口（失败也给一句人设化道歉）。 */
+// ---- 代查任务状态（消灭等待黑洞：app 端常驻指示条）----
+
+let activeLookupText: string | null = null
+let activeLookupAbort: AbortController | null = null
+
+/** 当前代查状态（轮询兜底通道用：无 WS 时 app 从 /v1/notifications 响应读取）。 */
+export function currentLookupStatus(): string | null {
+  return activeLookupText
+}
+
+/** 取消进行中的代查（app 指示条 ✕）。返回是否有可取消的任务。 */
+export function cancelActiveLookup(): boolean {
+  if (activeLookupAbort === null) return false
+  activeLookupAbort.abort()
+  return true
+}
+
+function setLookupStatus(deps: GatewayDeps, text: string | null): void {
+  activeLookupText = text
+  deps.hub?.broadcastLookupStatus(text)
+}
+
 async function lookupAndSay(
   deps: GatewayDeps,
   input: { query: string; userQuestion: string; systemPrompt: string },
 ): Promise<void> {
   const { db, config } = deps
   console.log(`[lookup] 派 claude 代查: ${input.query}`)
+  const abort = new AbortController()
+  activeLookupAbort = abort
+  setLookupStatus(deps, '她正在查资料…')
   try {
-    let result = ''
+    let raw = ''
     for await (const data of streamChatCompletion({
       baseUrl: '',
       apiKey: '',
       model: config.brainModel,
+      signal: abort.signal,
       messages: [
         { role: 'system', content: input.systemPrompt },
         {
           role: 'user',
-          content: `主人刚才问你："${input.userQuestion}"。你已经查到了，现在直接把结果告诉主人：一到三句话说结论（数字/事实要具体），以 [emotion] 标签开头。绝不要再转场（不要说"等我查""马上告诉你"之类的话），不要提"工具""查询""系统"这些字眼，不要输出纯文本链接。**图片例外**：主人那边能直接显示图片——如果你查到了相关图片，在回复末尾另起一行用 ![描述](图片URL) 嵌入（只嵌真实查到的，绝不编造）。要查的问题：${input.query}`,
+          content: `主人刚才问你："${input.userQuestion}"。你已经查到了，把结果告诉主人。**严格按 JSON 输出**，不要输出 JSON 以外的任何内容：
+{"result": "一到三句口语化结论（数字/事实要具体，以 [emotion] 标签开头；查到相关图片可在末尾用 ![描述](图片URL) 嵌入）", "sources": [{"title": "来源标题", "url": "真实抓到的来源URL"}]}
+规则：result 正文不要纯文本链接；sources 给 1~5 条你真正查过的出处（WebSearch/WebFetch 实际访问过的 URL），**绝不编造**；没有可靠来源就给空数组。不要提"工具""查询""系统"这些字眼。要查的问题：${input.query}`,
         },
       ],
       apiFormat: 'claude-code',
       timeoutMs: 300_000,  // 搜图等多轮 WebSearch/WebFetch 常超 120s（2026-10-26 实测超时）
     })) {
-      result += extractDelta(data)
+      raw += extractDelta(data)
     }
+    const { result, sources } = parseLookupResult(raw)
     // 占位符是给聊天流防卡死的，outbox 一次性播出不需要，剥掉
-    const text = splitLookup(result).reply.replace(TOOL_USE_PLACEHOLDER, '').trim()
-    if (text !== '') {
+    const text = result.replace(TOOL_USE_PLACEHOLDER, '').trim() + formatSourcesBlock(sources)
+    if (text.trim() !== '') {
       enqueueSay(db, text, 'lookup')
-      console.log(`[lookup] 结果已入队: ${text.slice(0, 60)}`)
+      console.log(`[lookup] 结果已入队: ${text.slice(0, 60)}（来源 ${sources.length} 条）`)
     }
+    setLookupStatus(deps, null)
   } catch (err) {
     console.warn('[lookup] 代查失败:', err instanceof Error ? err.message : err)
+    // 用户主动取消不算失败安抚场景（已说了要停）
+    if (abort.signal.aborted) {
+      setLookupStatus(deps, null)
+      return
+    }
     enqueueSay(db, '[sad] 唔……刚才答应主人查的东西，我这边出了点小状况没查到，对不起嘛……', 'lookup-error')
+    setLookupStatus(deps, '查询失败了')
+    setTimeout(() => {
+      if (activeLookupText === '查询失败了') setLookupStatus(deps, null)
+    }, 2_000)
+  } finally {
+    activeLookupAbort = null
   }
 }

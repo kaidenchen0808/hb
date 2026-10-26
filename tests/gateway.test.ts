@@ -237,3 +237,31 @@ describe('skills 注入', () => {
     expect(sys?.content).toContain('### translate')
   })
 })
+
+describe('代查结果 JSON 解析（引用来源）', () => {
+  it('parseLookupResult：标准 JSON 拆 result + sources', async () => {
+    const { parseLookupResult, formatSourcesBlock } = await import('../src/http/gateway.ts')
+    const raw = '{"result": "[happy] 今天上海晴 24 度", "sources": [{"title": "天气网", "url": "https://t.com/a"}, {"title": "新闻", "url": "https://n.com/b"}]}'
+    const parsed = parseLookupResult(raw)
+    expect(parsed.result).toBe('[happy] 今天上海晴 24 度')
+    expect(parsed.sources).toHaveLength(2)
+    expect(formatSourcesBlock(parsed.sources)).toContain('[天气网](https://t.com/a)')
+  })
+
+  it('容错：markdown 代码块包裹 / 纯文本 / 无 sources / 坏 URL 过滤 / 超 5 条截断', async () => {
+    const { parseLookupResult } = await import('../src/http/gateway.ts')
+    // markdown 包裹
+    const wrapped = '```json\n{"result": "结论", "sources": []}\n```'
+    expect(parseLookupResult(wrapped).result).toBe('结论')
+    // 纯文本兜底（永不丢内容）
+    expect(parseLookupResult('就是一句普通回复')).toEqual({ result: '就是一句普通回复', sources: [] })
+    // 坏条目过滤：非 http URL 跳过、title 缺省用 URL
+    const dirty = parseLookupResult('{"result": "r", "sources": [{"url": "ftp://x"}, {"url": "https://ok.com/1"}, {"title": "t", "url": "javascript:alert(1)"}]}')
+    expect(dirty.sources).toEqual([{ title: 'https://ok.com/1', url: 'https://ok.com/1' }])
+    // 超 5 条截断
+    const many = parseLookupResult('{"result": "r", "sources": ' + JSON.stringify(
+      Array.from({ length: 8 }, (_, i) => ({ title: `t${i}`, url: `https://x.com/${i}` }))
+    ) + '}')
+    expect(many.sources).toHaveLength(5)
+  })
+})

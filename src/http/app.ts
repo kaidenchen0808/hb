@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import type { AppConfig } from '../config.ts'
 import type { CompanionDb } from '../db/database.ts'
 import type { Persona } from '../persona/loader.ts'
-import { handleChatCompletion, type GatewayDeps } from './gateway.ts'
+import { handleChatCompletion, currentLookupStatus, cancelActiveLookup, type GatewayDeps } from './gateway.ts'
 import { insertEvent, isEventType, recentEvents } from '../memory/eventStore.ts'
 import { isHookType, recordRawEvent, type RawEventInput } from '../memory/rawEvents.ts'
 import { finalizeSession } from '../memory/aggregator.ts'
@@ -215,6 +215,7 @@ export function createApp(deps: AppDeps): Hono {
     const messages = drainOutbox(db)
     c.header('X-Companion-Realtime', '1')
     return c.json({
+      activeLookup: currentLookupStatus(),
       notifications: messages.map((m) => ({
         id: String(m.id),
         text: m.text,
@@ -222,6 +223,12 @@ export function createApp(deps: AppDeps): Hono {
         ...(typeof m.animation === 'string' && m.animation !== '' ? { animation: m.animation } : {}),
       })),
     })
+  })
+
+  // 取消进行中的代查（app 指示条的 ✕）——没有进行中任务也是 200（幂等）
+  app.post('/api/lookup/cancel', (c) => {
+    const cancelled = cancelActiveLookup()
+    return c.json({ ok: true, cancelled })
   })
 
   return app

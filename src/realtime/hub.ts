@@ -130,6 +130,15 @@ export class RealtimeHub {
     for (const ws of this.clients) if (ws.readyState === ws.OPEN) ws.send(raw)
   }
 
+  /** 代查任务状态（[lookup] 二段）：开始/结束/失败。text=null 表示结束（指示条消失）。
+   *  轮询兜底通道由 app.ts 读 activeLookup 状态补充（无 WS 时 app 每轮轮询也能拿到）。 */
+  broadcastLookupStatus(text: string | null): void {
+    if (this.clients.size === 0) return
+    const frame = { type: 'status', status: 'lookup', text }
+    const raw = JSON.stringify(frame)
+    for (const ws of this.clients) if (ws.readyState === ws.OPEN) ws.send(raw)
+  }
+
   get clientCount(): number {
     return this.clients.size
   }
