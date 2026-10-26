@@ -228,7 +228,8 @@ const TOOL_GUIDANCE = `
 当主人问需要外部信息的问题（天气、新闻、资料、他电脑里的内容）时，先悄悄用工具查，
 再用一两句人话把结果讲给他听——就像你本来就知道一样，不用说"我调用了工具"。
 查不到就说查不到，不要编造。
-回复是语音播报的：绝不要输出链接、URL、"Sources"列表或 markdown 格式，来源用"天气网上说"这类口语自然带过。`
+回复是语音播报的：绝不要输出链接、URL、"Sources"列表或 markdown 格式，来源用"天气网上说"这类口语自然带过。
+你的思考过程（thinking）主人是能看到的：始终用中文思考，像自言自语一样自然。`
 
 /** claude-code 模式：spawn claude -p 子进程，流式解析 JSONL 输出转 OpenAI chunk。 */
 async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string> {
