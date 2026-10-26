@@ -28,10 +28,23 @@ else
 fi
 
 echo "── 3/4 app→服务的轮询通道（她的即时说话通道）"
+# 8787 可能是 dev 实例（写仓库库）或部署实例（写 ~/.companion-layer 库），
+# 记两库 max(id)，探针落进哪个库就查哪个库的 delivered_at
+DBS=("$(cd "$(dirname "$0")/.." && pwd)/data/companion.db" "$HOME/.companion-layer/data/companion.db")
+BEFORE=()
+for db in "${DBS[@]}"; do
+  BEFORE+=("$(sqlite3 "$db" 'SELECT COALESCE(MAX(id),0) FROM outbox' 2>/dev/null || echo 0)")
+done
 curl -s -m 2 -X POST "$URL/api/say" -H 'Content-Type: application/json' \
   -d '{"text":"[neutral] （自检探针）","source":"check.sh"}' >/dev/null 2>&1
 sleep 3.5
-probe=$(sqlite3 "$(dirname "$0")/../data/companion.db" "SELECT delivered_at IS NOT NULL FROM outbox ORDER BY id DESC LIMIT 1" 2>/dev/null)
+probe=""
+for i in "${!DBS[@]}"; do
+  after=$(sqlite3 "${DBS[$i]}" 'SELECT COALESCE(MAX(id),0) FROM outbox' 2>/dev/null || echo 0)
+  if [ "$after" -gt "${BEFORE[$i]}" ] 2>/dev/null; then
+    probe=$(sqlite3 "${DBS[$i]}" "SELECT delivered_at IS NOT NULL FROM outbox WHERE id=$after" 2>/dev/null)
+  fi
+done
 if [ "$probe" = "1" ]; then
   ok "轮询活着（探针已被取走）"
 else
