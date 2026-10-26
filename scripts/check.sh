@@ -79,9 +79,9 @@ for line in sys.stdin:
 print(text)")
 if [ -n "$reply" ] && ! echo "$reply" | grep -q "脑子突然有点乱"; then
   ok "大脑真回话（${reply:0:30}…）"
-  # 自检不留痕：清掉这轮的 user 行与好感度影响（结算与记忆照常，仅清理展示记忆）
+  # 自检不留痕：清掉这轮的 user 行与 assistant 回复行（结算与好感度照常发生，仅清理她的展示记忆）
   for db in "${DBS[@]}"; do
-    sqlite3 "$db" "DELETE FROM chat_history WHERE content LIKE '%（自检）请只回复%'" 2>/dev/null || true
+    sqlite3 "$db" "DELETE FROM chat_history WHERE content LIKE '%（自检）请只回复%' OR content LIKE '%自检通过%'" 2>/dev/null || true
   done
 else
   bad "大脑没真回话（空或降级文案）"
