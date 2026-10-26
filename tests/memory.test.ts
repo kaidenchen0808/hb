@@ -86,6 +86,15 @@ describe('facts', () => {
     insertFacts(db, [{ kind: 'habit', content: '主人说这周要早睡' }]) // kind 不同不算重复
     expect(recentFacts(db, 10)).toHaveLength(2)
   })
+
+  it('写入去重：语义近似但长短不同的变体也拦截（2026-10-26 真实案例形状）', () => {
+    insertFacts(db, [{ kind: 'promise', content: '主人说要去深圳湾看月亮' }])
+    // 真实案例：旧记忆带后续状态尾巴，新提取是短版——前缀法漏，2-gram 拦得住
+    insertFacts(db, [{ kind: 'promise', content: '主人说要去深圳湾看月亮，至今还没确认去了没有' }])
+    // 完全不同的事实正常入库
+    insertFacts(db, [{ kind: 'preference', content: '主人喜欢吃辣' }])
+    expect(recentFacts(db, 10)).toHaveLength(2)
+  })
 })
 
 describe('relationship', () => {

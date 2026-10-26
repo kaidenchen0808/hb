@@ -295,6 +295,7 @@ function settleAfterChat(
           const n = insertFacts(db, facts)
           if (n > 0) console.log(`[facts] 新记忆 ${n} 条`)
         },
+        recentFacts(db, 12).map((f) => f.content),  // 已有记忆注入 prompt，防复述重复提取
       )
     }
 
