@@ -15,6 +15,8 @@ export interface StreamChatOptions {
   model: string
   messages: ChatMessage[]
   signal?: AbortSignal
+  /** claude-code 模式专属：子进程总超时（默认 120s；多轮工具调用场景如搜图可放宽）。 */
+  timeoutMs?: number
   temperature?: number
   /** openai: /chat/completions；anthropic: /v1/messages；claude-code: spawn claude -p 子进程（带只读工具） */
   apiFormat?: 'openai' | 'anthropic' | 'claude-code'
@@ -277,7 +279,10 @@ const TOOL_GUIDANCE = `
 当主人问需要外部信息的问题（天气、新闻、资料、他电脑里的内容）时，先悄悄用工具查，
 再用一两句人话把结果讲给他听——就像你本来就知道一样，不用说"我调用了工具"。
 查不到就说查不到，不要编造。
-回复是语音播报的：绝不要输出链接、URL、"Sources"列表或 markdown 格式，来源用"天气网上说"这类口语自然带过。
+回复会被语音播报，同时显示在能渲染 Markdown 的聊天气泡里：
+- 口头表达用"天气网上说"这类口语自然带过，不要输出纯文本链接或"Sources"列表
+- **图片例外且鼓励**：主人那边能直接显示图片——当你（用工具）找到相关图片时，
+  在回复末尾另起一行用 ![描述](图片URL) 嵌入，主人就能看到。只嵌真实查到的 URL，绝不编造。
 你的思考过程（thinking）主人是能看到的：始终用中文思考，像自言自语一样自然。`
 
 /** claude-code 模式：spawn claude -p 子进程，流式解析 JSONL 输出转 OpenAI chunk。 */
@@ -321,7 +326,7 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
   const timer = setTimeout(() => {
     timedOut.value = true
     child.kill('SIGKILL')
-  }, CLAUDE_CODE_TIMEOUT_MS)
+  }, opts.timeoutMs ?? CLAUDE_CODE_TIMEOUT_MS)
   const onAbort = () => child.kill('SIGKILL')
   opts.signal?.addEventListener('abort', onAbort, { once: true })
 
