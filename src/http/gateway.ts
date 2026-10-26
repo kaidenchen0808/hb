@@ -49,6 +49,33 @@ const THINKING_LANGUAGE_GUIDANCE = `
 ## 思考的语言
 你的思考过程（thinking）主人是能看到的：始终用中文思考，像自言自语一样自然。`
 
+/** 请求体 skills 字段解析：[{name, content}]。name/content 必填非空；
+ *  单技能截 4000 字、合计截 8000（superpowers 类超长技能不吃满上下文）。 */
+export function parseSkills(raw: unknown): Array<{ name: string; content: string }> {
+  if (!Array.isArray(raw)) return []
+  const out: Array<{ name: string; content: string }> = []
+  let total = 0
+  for (const item of raw) {
+    if (item === null || typeof item !== 'object') continue
+    const name = String((item as { name?: unknown }).name ?? '').trim()
+    const content = String((item as { content?: unknown }).content ?? '').trim()
+    if (name === '' || content === '') continue
+    const capped = content.slice(0, Math.min(4000, Math.max(0, 8000 - total)))
+    if (capped === '') break
+    out.push({ name, content: capped })
+    total += capped.length
+    if (total >= 8000) break
+  }
+  return out
+}
+
+/** 技能注入段：拼在人格 system 之后。空技能返回空串（零开销）。 */
+export function buildSkillSection(skills: Array<{ name: string; content: string }>): string {
+  if (skills.length === 0) return ''
+  const parts = skills.map((s) => `### ${s.name}\n${s.content}`).join('\n\n')
+  return `\n\n## 本轮启用的技能\n主人从技能面板选中了以下技能，本轮对话请按这些技能的方法论与口吻回答：\n\n${parts}`
+}
+
 /** s 的结尾是否是标记的不完整前缀（如 "[look"），返回该前缀长度（0 表示无）。 */
 export function partialLookupMarkerLen(s: string): number {
   for (let i = Math.min(LOOKUP_MARKER.length, s.length); i > 0; i--) {
@@ -100,8 +127,10 @@ export function handleChatCompletion(deps: GatewayDeps) {
     const body = await c.req.json<Record<string, unknown>>().catch(() => null)
     const messages = body?.messages
     if (!Array.isArray(messages) || messages.length === 0) {
-      return c.json({ error: { message: 'messages 不能为空', type: 'invalid_request_error' } }, 400)
+      return c.json({ error: { message: 'messages 不能为空', type: 'invalid_request_error' } }, 400 )
     }
+    // 客户端 / 技能选择器随轮携带的技能（prompt 注入；不进消息序列/落库）
+    const skills = parseSkills(body?.skills)
 
     // 1) 丢弃 app 的人格 system，检测主动开口信号
     let proactiveHint: 'online' | 'quiet' | undefined
@@ -144,7 +173,8 @@ export function handleChatCompletion(deps: GatewayDeps) {
         milestoneDirective: milestone ?? undefined,
         missingDirective: missing ?? undefined,
       }) +
-      (config.brainApiFormat === 'hybrid' ? LOOKUP_GUIDANCE + THINKING_LANGUAGE_GUIDANCE : '')
+      (config.brainApiFormat === 'hybrid' ? LOOKUP_GUIDANCE + THINKING_LANGUAGE_GUIDANCE : '') +
+      buildSkillSection(skills)
 
     const upstreamMessages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...chatMessages]
 

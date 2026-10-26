@@ -193,3 +193,47 @@ describe('hybrid [lookup] 标记处理', () => {
     expect(partialLookupMarkerLen('xx[lookup]yy')).toBe(0) // 完整标记已出现，由 indexOf 分支处理
   })
 })
+
+describe('skills 注入', () => {
+  it('parseSkills：合法条目通过、坏条目跳过、合计截断', async () => {
+    const { parseSkills, buildSkillSection } = await import('../src/http/gateway.ts')
+    expect(parseSkills(null)).toEqual([])
+    expect(parseSkills([{ name: 'a', content: '方法论' }])).toEqual([{ name: 'a', content: '方法论' }])
+    // name 缺失 / content 空 / 非对象 → 跳过
+    expect(parseSkills([{ content: 'x' }, { name: 'b' }, 'junk', { name: 'b', content: 'y' }]))
+      .toEqual([{ name: 'b', content: 'y' }])
+    // 单技能截 4000
+    const long = parseSkills([{ name: 'big', content: '字'.repeat(9000) }])
+    expect(long[0].content.length).toBe(4000)
+    // 合计截 8000：第二个技能只剩 4000 额度
+    const two = parseSkills([
+      { name: 'a', content: 'x'.repeat(4000) },
+      { name: 'b', content: 'y'.repeat(5000) },
+    ])
+    expect(two[1].content.length).toBe(4000)
+    // 段拼装
+    expect(buildSkillSection([])).toBe('')
+    expect(buildSkillSection([{ name: 't', content: 'c' }])).toContain('### t')
+  })
+
+  it('带 skills 的请求：技能进大脑 system、不落 chat_history', async () => {
+    const app = makeApp(true)
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'x',
+        stream: true,
+        messages: [{ role: 'user', content: '技能轮测试' }],
+        skills: [{ name: 'translate', content: '中英互译方法论' }],
+      }),
+    })
+    await res.text()
+    // 技能文本不出现在她的记忆里（只进大脑 system）
+    const leaked = db.prepare(`SELECT COUNT(*) AS n FROM chat_history WHERE content LIKE '%方法论%'`).get() as { n: number }
+    expect(leaked.n).toBe(0)
+    // 大脑确实收到了技能段
+    const sys = upstreamBodies[upstreamBodies.length - 1].messages.find((m) => m.role === 'system')
+    expect(sys?.content).toContain('### translate')
+  })
+})
