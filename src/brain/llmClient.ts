@@ -178,6 +178,49 @@ export function extractClaudeThinking(line: string): string | null {
   return thinking === '' ? null : thinking
 }
 
+/** `--include-partial-messages` 的 token 级增量（`stream_event` → `content_block_delta`）。
+ *  返回 `{}` 表示"是 delta 事件但无文本"（signature_delta 等），null 表示不是 delta 事件。
+ *  thinking_delta 的内容键是 `thinking`，text_delta 是 `text`（实测 2.1.177）。 */
+export function extractClaudePartialDelta(
+  line: string,
+): { thinking?: string; text?: string } | null {
+  let evt: unknown
+  try {
+    evt = JSON.parse(line)
+  } catch {
+    return null
+  }
+  const e = evt as {
+    type?: string
+    event?: { type?: string; delta?: { type?: string; thinking?: string; text?: string } }
+  }
+  if (e.type !== 'stream_event' || e.event?.type !== 'content_block_delta') return null
+  const delta = e.event.delta
+  if (delta === undefined) return {}
+  if (delta.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+    return { thinking: delta.thinking }
+  }
+  if (delta.type === 'text_delta' && typeof delta.text === 'string') {
+    return { text: delta.text }
+  }
+  return {}
+}
+
+/** partial 模式下工具调用的开始事件（content_block_start 的 block 是 tool_use）。 */
+export function claudePartialLineHasToolUseStart(line: string): boolean {
+  let evt: unknown
+  try {
+    evt = JSON.parse(line)
+  } catch {
+    return false
+  }
+  const e = evt as {
+    type?: string
+    event?: { type?: string; content_block?: { type?: string } }
+  }
+  return e.type === 'stream_event' && e.event?.type === 'content_block_start' && e.event.content_block?.type === 'tool_use'
+}
+
 /** 该行是否含 tool_use 块（用于插入"查一下"占位）。纯函数可测。 */
 export function claudeLineHasToolUse(line: string): boolean {
   try {
@@ -249,6 +292,8 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
       '-p',
       '--output-format', 'stream-json',
       '--verbose',
+      '--include-partial-messages',
+      '--bare',   // 跳过 hooks/LSP/plugin：spawn 启动 4.8s → 1.7s（工具走 --allowedTools 不受影响，实测可用）
       '--system-prompt', (system === '' ? 'You are a helpful assistant.' : system) + TOOL_GUIDANCE,
       '--allowedTools', CLAUDE_CODE_ALLOWED_TOOLS.join(','),
     ],
@@ -292,18 +337,40 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
   child.stdin.end()
 
   let placeholderSent = false
+  // partial 模式（--include-partial-messages）下完整 assistant 块会在增量之后**再发一遍**——
+  // 各自跟踪"是否已见过增量"，完整块仅在无增量时兜底输出（兼容不支持该 flag 的旧 CLI）。
+  let sawPartialText = false
+  let sawPartialReasoning = false
+  const model = opts.model === '' ? 'claude-code' : opts.model
   try {
     const rl = createInterface({ input: child.stdout })
     for await (const line of rl) {
+      // ① token 级增量：真正的流式（thinking_delta / text_delta）
+      const partial = extractClaudePartialDelta(line)
+      if (partial !== null) {
+        if (partial.thinking !== undefined) {
+          sawPartialReasoning = true
+          yield wrapAsReasoningChunk(id, model, partial.thinking)
+        } else if (partial.text !== undefined) {
+          sawPartialText = true
+          yield wrapAsChunk(id, model, partial.text)
+        }
+        continue
+      }
+      if (placeholderSent === false && claudePartialLineHasToolUseStart(line)) {
+        placeholderSent = true
+        yield wrapAsChunk(id, model, TOOL_USE_PLACEHOLDER)
+        continue
+      }
       if (placeholderSent === false && claudeLineHasToolUse(line)) {
         placeholderSent = true
-        yield wrapAsChunk(id, opts.model === '' ? 'claude-code' : opts.model, TOOL_USE_PLACEHOLDER)
+        yield wrapAsChunk(id, model, TOOL_USE_PLACEHOLDER)
       }
-      // 推理过程（thinking 块整块先于正文到达）→ reasoning_content chunk，app 端折叠展示
+      // ② 完整块：防重复（partial 已覆盖时跳过），旧 CLI 无增量时兜底
       const thinking = extractClaudeThinking(line)
-      if (thinking !== null) yield wrapAsReasoningChunk(id, opts.model === '' ? 'claude-code' : opts.model, thinking)
+      if (thinking !== null && !sawPartialReasoning) yield wrapAsReasoningChunk(id, model, thinking)
       const text = extractClaudeAssistantText(line)
-      if (text !== null) yield wrapAsChunk(id, opts.model === '' ? 'claude-code' : opts.model, text)
+      if (text !== null && !sawPartialText) yield wrapAsChunk(id, model, text)
     }
   } finally {
     opts.signal?.removeEventListener('abort', onAbort)
