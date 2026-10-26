@@ -24,6 +24,12 @@ const PROACTIVE_PATTERNS: Array<{ re: RegExp; hint: 'online' | 'quiet' }> = [
   { re: /quiet|idle|silent|安靜|一陣子沒/i, hint: 'quiet' },
 ]
 
+// ---- 好感度结算去重（进程内存即可，重启丢失可接受：只影响重生成场景的 3 分钟窗口） ----
+
+const AFFINITY_SETTLE_WINDOW_MS = 3 * 60_000
+const RECENT_SETTLES_MAX = 200
+const recentAffinitySettles = new Map<string, number>()
+
 // ---- hybrid 模式：[lookup] 标记的流式感知 ----
 
 const LOOKUP_MARKER = '[lookup]'
@@ -235,12 +241,28 @@ function settleAfterChat(
     markAllConsumed(db)
     if (input.milestoneStage !== undefined) clearMilestone(db, input.milestoneStage)
 
-    const before = getRelationship(db).affinity
-    settleChatTurn(db, { userRepliedToProactive: input.userRepliedToProactive, now: input.now })
-    const after = getRelationship(db).affinity
-    const transition = checkStageTransition(db, persona, before, after)
-    if (transition !== null) {
-      console.log(`[relationship] 阶段跃迁 → ${transition.stage}（好感度 ${before} → ${after}），告白已排队`)
+    // 好感度短窗去重：客户端"重新生成"会原样重发同一句 lastUser（app 端删末条 assistant 后重跑
+    // pipeline），若无去重她会对同一句话重复积累好感。相同 lastUser 在窗口内只结算一次；
+    // 落库/记忆提取照常（她的记忆里两轮回答都在，只有好感度不重复算）。
+    const settleKey = input.lastUser ?? ''
+    const lastSettleAt = recentAffinitySettles.get(settleKey)
+    const isDuplicateTurn =
+      settleKey !== '' && lastSettleAt !== undefined && input.now.getTime() - lastSettleAt < AFFINITY_SETTLE_WINDOW_MS
+    if (!isDuplicateTurn) {
+      const before = getRelationship(db).affinity
+      settleChatTurn(db, { userRepliedToProactive: input.userRepliedToProactive, now: input.now })
+      const after = getRelationship(db).affinity
+      const transition = checkStageTransition(db, persona, before, after)
+      if (transition !== null) {
+        console.log(`[relationship] 阶段跃迁 → ${transition.stage}（好感度 ${before} → ${after}），告白已排队`)
+      }
+      recentAffinitySettles.set(settleKey, input.now.getTime())
+      if (recentAffinitySettles.size > RECENT_SETTLES_MAX) {
+        // 防膨胀：清掉最旧一半（Map 迭代序 = 插入序）
+        const keepFrom = Math.ceil(recentAffinitySettles.size / 2)
+        const keys = [...recentAffinitySettles.keys()]
+        keys.slice(0, keys.length - keepFrom).forEach((k) => recentAffinitySettles.delete(k))
+      }
     }
 
     // 记忆提取走直连大脑（避免每次聊天额外 spawn 一次 claude）；未配直连则跳过

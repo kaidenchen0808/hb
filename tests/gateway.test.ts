@@ -106,6 +106,50 @@ describe('chat gateway', () => {
     expect(chat.n).toBe(2) // user + assistant
   })
 
+  it('重生成去重：相同 lastUser 短窗内好感度只结算一次，落库照常', async () => {
+    const app = makeApp(true)
+    const body = JSON.stringify({
+      model: 'x',
+      stream: true,
+      messages: [{ role: 'user', content: '这题怎么写' }],
+    })
+    const first = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    await first.text()
+    const afterFirst = getRelationship(db).affinity
+
+    // 客户端"重新生成"：同一句 lastUser 原样重发
+    const second = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    })
+    await second.text()
+    const afterSecond = getRelationship(db).affinity
+
+    expect(afterFirst).toBeGreaterThan(0)
+    expect(afterSecond).toBe(afterFirst) // 好感度未重复结算
+    // 但她的记忆里两轮都在（重生成不是没发生）
+    const chat = db.prepare(`SELECT COUNT(*) AS n FROM chat_history WHERE role = 'user'`).get() as { n: number }
+    expect(chat.n).toBe(2)
+  })
+
+  it('好感度去重不影响不同消息：各结算一次', async () => {
+    const app = makeApp(true)
+    for (const content of ['第一句', '第二句']) {
+      const res = await app.request('/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'x', stream: true, messages: [{ role: 'user', content }] }),
+      })
+      await res.text()
+    }
+    expect(getRelationship(db).affinity).toBeGreaterThan(1) // 两轮都加了
+  })
+
   it('大脑未配置：降级回复且带情绪标签', async () => {
     const app = makeApp(false)
     const res = await app.request('/v1/chat/completions', {
