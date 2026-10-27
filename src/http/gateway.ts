@@ -88,28 +88,72 @@ export function buildSkillSection(skills: Array<{ name: string; content: string 
  *  result、来源空（模型偶尔包 markdown 代码块或输出纯文本，永不因格式丢内容）。 */
 export function parseLookupResult(raw: string): { result: string; sources: Array<{ title: string; url: string }> } {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+  // 前置路径：GLM 的 server 工具（webReader 等）执行轨迹会作为 text 混在最终 JSON 前面
+  // （轨迹自带 {"url":…} 等 JSON 片段），旧的"首个 { 到最后一个 }"会剖出跨段坏片解析失败、
+  // 回落成把工具转储当台词（2026-10-27 e2e 实测）。改为定位最后一个 "result": 键，从其
+  // 所在 { 起做花括号平衡扫描（正确处理字符串内的 {} 与转义），天然跳过前置转储。
+  const keyed = text.match(/\{\s*"result"\s*:/)
+  if (keyed !== null && keyed.index !== undefined) {
+    const parsed = parseResultShape(sliceBalancedObject(text, keyed.index))
+    if (parsed !== null) return parsed
+  }
+  // 兜底路径：老格式容错（"result" 键缺失时不丢内容）
   const start = text.indexOf('{')
   const end = text.lastIndexOf('}')
   if (start >= 0 && end > start) {
-    try {
-      const parsed = JSON.parse(text.slice(start, end + 1)) as {
-        result?: unknown
-        sources?: unknown
-      }
-      const result = typeof parsed.result === 'string' ? parsed.result.trim() : ''
-      const sources = Array.isArray(parsed.sources)
-        ? parsed.sources
-            .map((s) => s as { title?: unknown; url?: unknown })
-            .filter((s) => typeof s.url === 'string' && /^https?:\/\//.test(s.url))
-            .map((s) => ({ title: typeof s.title === 'string' && s.title !== '' ? s.title : String(s.url), url: String(s.url) }))
-            .slice(0, 5)
-        : []
-      if (result !== '') return { result, sources }
-    } catch {
-      // 落到纯文本兜底
-    }
+    const parsed = parseResultShape(text.slice(start, end + 1))
+    if (parsed !== null) return parsed
   }
   return { result: text, sources: [] }
+}
+
+/** 从 start（必须是 '{'）起截出第一个花括号平衡的完整对象（null=扫不到闭合）。字符串内的
+ *  括号与反斜杠转义不参与计数。 */
+function sliceBalancedObject(text: string, start: number): string | null {
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (ch === '\\') {
+      escaped = true
+      continue
+    }
+    if (ch === '"') inString = !inString
+    if (inString) continue
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) return text.slice(start, i + 1)
+    }
+  }
+  return null
+}
+
+/** 解析 {result, sources} 形状（null=不是该形状/解析失败）。sources 条目校验 http(s) URL、
+ *  title 缺省用 URL、最多 5 条。 */
+function parseResultShape(json: string | null): { result: string; sources: Array<{ title: string; url: string }> } | null {
+  if (json === null) return null
+  let parsed: { result?: unknown; sources?: unknown }
+  try {
+    parsed = JSON.parse(json) as { result?: unknown; sources?: unknown }
+  } catch {
+    return null
+  }
+  const result = typeof parsed.result === 'string' ? parsed.result.trim() : ''
+  if (result === '') return null
+  const sources = Array.isArray(parsed.sources)
+    ? parsed.sources
+        .map((s) => s as { title?: unknown; url?: unknown })
+        .filter((s) => typeof s.url === 'string' && /^https?:\/\//.test(s.url))
+        .map((s) => ({ title: typeof s.title === 'string' && s.title !== '' ? s.title : String(s.url), url: String(s.url) }))
+        .slice(0, 5)
+    : []
+  return { result, sources }
 }
 
 /** 来源列表附在补说文本末尾的固定格式。app 端：Markdown 渲染可点；TTS 前由

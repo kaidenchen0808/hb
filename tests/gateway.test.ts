@@ -249,6 +249,39 @@ describe('代查结果 JSON 解析（引用来源）', () => {
     expect(formatSourcesBlock(parsed.sources)).toContain('[天气网](https://t.com/a)')
   })
 
+  it('真实事故样本：webReader 工具转储前置 + 正确 JSON 在后，仍取到干净 result/sources（2026-10-27 e2e 实测）', async () => {
+    const { parseLookupResult } = await import('../src/http/gateway.ts')
+    // GLM server 工具（webReader）的执行轨迹作为 text 流出，混在最终 JSON 前面——
+    // 旧实现 indexOf('{') 剖到转储里的 {"url":…}，跨段解析失败回落全文（入队即工具转储）
+    const raw = [
+      '**🌐 Z.ai Built-in Tool: webReader**',
+      '',
+      '**Input:**',
+      '```json',
+      '{"url":"https://k.sina.com.cn/article_x.html?from=finance","retain_images":false}',
+      '```',
+      '*Executing on server...*',
+      '**Output:**',
+      '**webReader_result_summary:** [{"text": {"title": "新浪财经", "description": "上证指数跌1.33%"}}]',
+      '',
+      '{"result": "[sad] 主人，今天大盘收在 3648.30 点，跌了 1.33%。", "sources": [{"title": "新浪财经：A股收盘", "url": "https://k.sina.com.cn/article_x.html"}, {"title": "21财经", "url": "http://21jingji.com/article_y.html"}]}',
+    ].join('\n')
+    const parsed = parseLookupResult(raw)
+    expect(parsed.result).toBe('[sad] 主人，今天大盘收在 3648.30 点，跌了 1.33%。')
+    expect(parsed.sources).toEqual([
+      { title: '新浪财经：A股收盘', url: 'https://k.sina.com.cn/article_x.html' },
+      { title: '21财经', url: 'http://21jingji.com/article_y.html' },
+    ])
+  })
+
+  it('边界：多行 pretty JSON + result 字符串内嵌花括号/引号（平衡扫描字符串豁免）', async () => {
+    const { parseLookupResult } = await import('../src/http/gateway.ts')
+    const raw = '前置噪声 {"url":"https://x"}\n{\n  "result": "查到了 {关键} 数据，他说\\"好\\"",\n  "sources": [\n    { "title": "t", "url": "https://ok.com" }\n  ]\n}'
+    const parsed = parseLookupResult(raw)
+    expect(parsed.result).toBe('查到了 {关键} 数据，他说"好"')
+    expect(parsed.sources).toEqual([{ title: 't', url: 'https://ok.com' }])
+  })
+
   it('容错：markdown 代码块包裹 / 纯文本 / 无 sources / 坏 URL 过滤 / 超 5 条截断', async () => {
     const { parseLookupResult } = await import('../src/http/gateway.ts')
     // markdown 包裹
