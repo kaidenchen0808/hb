@@ -11,7 +11,7 @@ import { getRelationship } from '../src/memory/relationship.ts'
 let db: CompanionDb
 let upstream: Server
 let upstreamPort = 0
-let upstreamBodies: Array<{ messages: Array<{ role: string; content: string }> }> = []
+let upstreamBodies: Array<{ model?: string; messages: Array<{ role: string; content: string }> }> = []
 
 // mock 大脑：记录收到的 messages，回放固定 SSE
 beforeEach(async () => {

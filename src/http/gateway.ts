@@ -49,6 +49,14 @@ const THINKING_LANGUAGE_GUIDANCE = `
 ## 思考的语言
 你的思考过程（thinking）主人是能看到的：始终用中文思考，像自言自语一样自然。`
 
+/** 排版指引（闲聊口语/知识结构化分流——渲染层已全面支持，无指引时模型输出大白话）。 */
+const FORMATTING_GUIDANCE = `
+
+## 排版
+主人的界面能完整渲染 Markdown（标题/列表/加粗/表格/公式/代码高亮/图片）。日常闲聊保持口语自然就好；
+但知识性、结构化的内容（分析、教程、对比、总结、方案）请用 Markdown 排版——标题分节、要点列表、
+关键结论加粗、数据用表格，公式用 $$…$$，不要输出大段无结构的文字。`
+
 /** 请求体 skills 字段解析：[{name, content}]。name/content 必填非空；
  *  单技能截 4000 字、合计截 8000（superpowers 类超长技能不吃满上下文）。 */
 export function parseSkills(raw: unknown): Array<{ name: string; content: string }> {
@@ -235,7 +243,7 @@ export function handleChatCompletion(deps: GatewayDeps) {
         milestoneDirective: milestone ?? undefined,
         missingDirective: missing ?? undefined,
       }) +
-      (config.brainApiFormat === 'hybrid' ? LOOKUP_GUIDANCE + THINKING_LANGUAGE_GUIDANCE : '') +
+      (config.brainApiFormat === 'hybrid' ? LOOKUP_GUIDANCE + THINKING_LANGUAGE_GUIDANCE + FORMATTING_GUIDANCE : '') +
       buildSkillSection(skills)
 
     const upstreamMessages: ChatMessage[] = [{ role: 'system', content: systemPrompt }, ...chatMessages]
