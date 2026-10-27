@@ -333,6 +333,26 @@ describe('贴图多模态路由', () => {
   })
 })
 
+describe('失信兜底：转场了却没带 [lookup]（文件路径场景自动代派）', () => {
+  it('用户发路径 + 她说转场话 + 无标记 → 提取路径自动代读', async () => {
+    const { detectUnfulfilledFileRead } = await import('../src/http/gateway.ts')
+    expect(detectUnfulfilledFileRead('/Users/x/Desktop/a.pptx 里讲了什么', '[curious] 我来看看它都写了啥哈～')).toBe('/Users/x/Desktop/a.pptx')
+    expect(detectUnfulfilledFileRead('看看 ~/Desktop/报告.docx', '等我打开看看里面写了什么～')).toBe('~/Desktop/报告.docx')
+    expect(detectUnfulfilledFileRead('/tmp/log.txt 最后一行', '我读一下哈')).toBe('/tmp/log.txt')
+  })
+
+  it('她没答应看（无转场词）→ 不兜底，避免误触发', async () => {
+    const { detectUnfulfilledFileRead } = await import('../src/http/gateway.ts')
+    expect(detectUnfulfilledFileRead('把文件移到 /Users/x/Downloads/ 呮', '好的主人')).toBeNull()
+  })
+
+  it('用户消息无路径 / 中文路径无扩展名 → 不兜底', async () => {
+    const { detectUnfulfilledFileRead } = await import('../src/http/gateway.ts')
+    expect(detectUnfulfilledFileRead('今天天气怎么样', '等我查一下哦')).toBeNull()
+    expect(detectUnfulfilledFileRead('看看桌面那个文件', '我来看看')).toBeNull()
+  })
+})
+
 describe('代查过程可视化（onToolEvent → 指示条文案）', () => {
   it('toolStatusText：工具调用译成人话，长输入截断', async () => {
     const { toolStatusText } = await import('../src/http/gateway.ts')

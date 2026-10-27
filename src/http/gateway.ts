@@ -38,10 +38,10 @@ const LOOKUP_MARKER = '[lookup]'
 const LOOKUP_GUIDANCE = `
 
 ## 查资料的方式
-你自己不能联网。当主人问需要外部信息的问题（天气、新闻、资料、找图片、他电脑里的内容）时：
+你自己不能联网、也打不开文件。当主人问需要外部信息的问题（天气、新闻、资料、找图片、他电脑里的内容），或发来一个文件路径让你看（.docx/.pptx/.xlsx/.pdf/截图等你打不开的文件）时：
 1. 先回一句自然的简短转场话（比如"等我查一下哦～"），不要编造答案
-2. 然后在回复的最末尾另起一行，原样输出：[lookup] 一句话写下要查的问题
-之后会有人帮你查，你拿到结果会再告诉主人。不需要查资料时就正常回答，绝不要输出 [lookup]。`
+2. 然后在回复的最末尾另起一行，原样输出：[lookup] 一句话写下要查的问题或文件路径
+之后会有人帮你查/帮你读文件，你拿到结果会再告诉主人。转场了就必须带 [lookup]，说了"我去看看"却不带标记，主人会永远等不到下文。不需要查资料时就正常回答，绝不要输出 [lookup]。`
 
 /** hybrid 模式专属：思考过程主人能看到，必须中文（与 claude-code 模式的 TOOL_GUIDANCE 对齐）。 */
 const THINKING_LANGUAGE_GUIDANCE = `
@@ -449,9 +449,12 @@ function settleAfterChat(
       )
     }
 
-    // hybrid 二段：她答应去查 → 派 claude 代查 → 结果经通知通道让她主动说
-    if (input.lookupQuery != null && input.lookupQuery !== '' && input.lastUser !== null && input.systemPrompt !== undefined) {
-      void lookupAndSay(deps, { query: input.lookupQuery, userQuestion: input.lastUser, systemPrompt: input.systemPrompt })
+    // hybrid 二段：她答应去查 → 派 claude 代查 → 结果经通知通道让她主动说。
+    // 失信兜底：转场了却没带标记时自动代读（detectUnfulfilledFileRead 注释里有实测背景）。
+    const fallbackQuery = input.lookupQuery ?? detectUnfulfilledFileRead(input.lastUser ?? '', input.assistantText)
+    if (fallbackQuery !== null && fallbackQuery !== '' && input.lastUser !== null && input.systemPrompt !== undefined) {
+      if (input.lookupQuery === null) console.log(`[lookup] 失信兜底：转场无标记，自动代读 ${fallbackQuery}`)
+      void lookupAndSay(deps, { query: fallbackQuery, userQuestion: input.lastUser, systemPrompt: input.systemPrompt })
     }
   } catch (err) {
     console.error('[gateway] 流后结算失败（不影响回复）:', err instanceof Error ? err.message : err)
@@ -518,6 +521,19 @@ export function lookupFailText(query: string, reason: string): string {
   return `[sad] 唔……刚才答应主人查的「${query.slice(0, 30)}」，${shortReason}，对不起嘛……`
 }
 
+/** 失信兜底：她回了转场话（"我来看看/打开看看"）却没带 [lookup] 标记——GLM 对协议的遵循
+ *  不稳（2026-10-27 实测文件路径场景连续两轮失信），主人会永远等不到下文。三条件兜底自动
+ *  代派：用户消息含文件路径 + 她的回复含转场词 + 无标记。她说"我不看/打不开"类拒绝不会
+ *  命中转场词，误伤极小。返回提取到的路径（null=不兜底）。 */
+export function detectUnfulfilledFileRead(lastUser: string, assistantText: string): string | null {
+  if (lastUser === '' || assistantText.includes(LOOKUP_MARKER)) return null
+  const TRANSITION_WORDS = /看看|打开|读一读|读一下|读下|瞧瞧|瞧一瞧|瞄一眼|我来看/
+  if (!TRANSITION_WORDS.test(assistantText)) return null
+  const FILE_PATH = /(?:~|\/)[^\s，。；？！、）】""]*\.[A-Za-z0-9]{2,4}/
+  const m = lastUser.match(FILE_PATH)
+  return m !== null ? m[0] : null
+}
+
 async function lookupAndSay(
   deps: GatewayDeps,
   input: { query: string; userQuestion: string; systemPrompt: string },
@@ -538,7 +554,7 @@ async function lookupAndSay(
         { role: 'system', content: input.systemPrompt },
         {
           role: 'user',
-          content: `主人刚才问你："${input.userQuestion}"。你已经查到了，把结果告诉主人。**严格按 JSON 输出**，不要输出 JSON 以外的任何内容：
+          content: `主人刚才问你："${input.userQuestion}"。你已经查到了，把结果告诉主人。${/[~/]\S+\.[a-z0-9]{2,4}/i.test(input.query) ? '问题里是文件路径：先用 Read 工具读取该文件（Read 支持 txt/md/json/代码等纯文本；.docx/.xlsx 等二进制格式读不了就如实说明）。' : ''}**严格按 JSON 输出**，不要输出 JSON 以外的任何内容：
 {"result": "一到三句口语化结论（数字/事实要具体，以 [emotion] 标签开头；查到相关图片可在末尾用 ![描述](图片URL) 嵌入）", "sources": [{"title": "来源标题", "url": "真实抓到的来源URL"}]}
 规则：result 正文不要纯文本链接；sources 给 1~5 条你真正查过的出处（WebSearch/WebFetch 实际访问过的 URL），**绝不编造**；没有可靠来源就给空数组。不要提"工具""查询""系统"这些字眼。要查的问题：${input.query}`,
         },
