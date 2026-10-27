@@ -437,6 +437,43 @@ function setLookupStatus(deps: GatewayDeps, text: string | null): void {
   deps.hub?.broadcastLookupStatus(text)
 }
 
+/** 工具调用 → 指示条人话（代查过程可视化）。长输入截断防撑爆指示条。 */
+export function toolStatusText(tool: string, input: Record<string, unknown>): string {
+  const clip = (v: unknown, max = 40): string => {
+    const s = typeof v === 'string' ? v : ''
+    return s.length > max ? `${s.slice(0, max)}…` : s
+  }
+  switch (tool) {
+    case 'WebSearch':
+      return `她正在搜索：${clip(input.query)}`
+    case 'WebFetch':
+      return `她正在读网页：${clip(input.url)}`
+    case 'Read':
+      return `她正在读文件：${clip(input.file_path ?? input.path)}`
+    case 'Glob':
+      return `她正在找文件：${clip(input.pattern)}`
+    case 'Grep':
+      return `她正在搜内容：${clip(input.pattern)}`
+    default:
+      return '她正在查资料…'
+  }
+}
+
+/** lookup 结果/失败落对话史：聊天窗有痕，她下一轮拿得到事实、不再瞎编"忘了查"。 */
+function recordLookupTurn(db: CompanionDb, content: string): void {
+  db.prepare(`INSERT INTO chat_history (role, content, created_at) VALUES (?, ?, ?)`).run(
+    'assistant',
+    content,
+    new Date().toISOString(),
+  )
+}
+
+/** 代查失败文案：原因译成人话（超时/故障），带上原问题让她和主人对得上号。 */
+export function lookupFailText(query: string, reason: string): string {
+  const shortReason = reason.includes('超时') ? '查了太久也没等到结果' : '查询管道出了点故障'
+  return `[sad] 唔……刚才答应主人查的「${query.slice(0, 30)}」，${shortReason}，对不起嘛……`
+}
+
 async function lookupAndSay(
   deps: GatewayDeps,
   input: { query: string; userQuestion: string; systemPrompt: string },
@@ -464,6 +501,9 @@ async function lookupAndSay(
       ],
       apiFormat: 'claude-code',
       timeoutMs: 300_000,  // 搜图等多轮 WebSearch/WebFetch 常超 120s（2026-10-26 实测超时）
+      onToolEvent: ({ tool, input }) => {
+        setLookupStatus(deps, toolStatusText(tool, input))
+      },
     })) {
       raw += extractDelta(data)
     }
@@ -472,17 +512,21 @@ async function lookupAndSay(
     const text = result.replace(TOOL_USE_PLACEHOLDER, '').trim() + formatSourcesBlock(sources)
     if (text.trim() !== '') {
       enqueueSay(db, text, 'lookup')
+      recordLookupTurn(db, text)
       console.log(`[lookup] 结果已入队: ${text.slice(0, 60)}（来源 ${sources.length} 条）`)
     }
     setLookupStatus(deps, null)
   } catch (err) {
-    console.warn('[lookup] 代查失败:', err instanceof Error ? err.message : err)
+    const reason = err instanceof Error ? err.message : String(err)
+    console.warn('[lookup] 代查失败:', reason)
     // 用户主动取消不算失败安抚场景（已说了要停）
     if (abort.signal.aborted) {
       setLookupStatus(deps, null)
       return
     }
-    enqueueSay(db, '[sad] 唔……刚才答应主人查的东西，我这边出了点小状况没查到，对不起嘛……', 'lookup-error')
+    const text = lookupFailText(input.query, reason)
+    enqueueSay(db, text, 'lookup-error')
+    recordLookupTurn(db, text)
     setLookupStatus(deps, '查询失败了')
     setTimeout(() => {
       if (activeLookupText === '查询失败了') setLookupStatus(deps, null)

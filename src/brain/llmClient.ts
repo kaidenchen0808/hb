@@ -19,6 +19,8 @@ export interface StreamChatOptions {
   signal?: AbortSignal
   /** claude-code 模式专属：子进程总超时（默认 120s；多轮工具调用场景如搜图可放宽）。 */
   timeoutMs?: number
+  /** claude-code 模式专属：每次工具调用时回调（代查过程可视化：网关译成指示条文案）。 */
+  onToolEvent?: (event: { tool: string; input: Record<string, unknown> }) => void
   /** 关闭思考（anthropic 端点 thinking:{type:disabled}，GLM 实测 2.8s→1.1s）。 */
   disableThinking?: boolean
   temperature?: number
@@ -158,6 +160,10 @@ async function* streamAnthropic(opts: StreamChatOptions): AsyncGenerator<string>
 
 /** 只读工具白名单：她能看能查，但不能改、不能删、不能跑任意命令。 */
 const CLAUDE_CODE_ALLOWED_TOOLS = ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch']
+/** 硬禁工具（只读边界兜底）：--allowedTools 只是免询问清单；disallowed 才是硬拒绝。
+ * 历史坑：--bare 模式 tools 恒为 [Bash,Edit,Read]（--tools 被裁剪），"代查"实际一直靠
+ * Bash curl 越权执行（2026-10-27 实测）；现改 --tools 显式注入五件套 + 本清单禁写禁执行。 */
+const CLAUDE_CODE_DISALLOWED_TOOLS = ['Bash', 'Edit', 'Write', 'NotebookEdit', 'TodoWrite', 'Task', 'Agent', 'LSP']
 const CLAUDE_CODE_TIMEOUT_MS = 120_000
 /** 工具调用期间的流式提示语（只插一次，防止长时间无输出像卡死）。 */
 export const TOOL_USE_PLACEHOLDER = '（等我查一下哦…）'
@@ -251,6 +257,23 @@ export function claudeLineHasToolUse(line: string): boolean {
   }
 }
 
+/** 从完整 assistant 块提取第一个工具调用的 name+input（null=非工具调用行/解析失败）。
+ * 代查过程可视化用：网关拿 input 里的 query/url/path 译成"她正在搜索：…"指示条文案。 */
+export function extractClaudeToolUse(line: string): { name: string; input: Record<string, unknown> } | null {
+  try {
+    const e = JSON.parse(line) as {
+      type?: string
+      message?: { content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }> }
+    }
+    if (e.type !== 'assistant' || !Array.isArray(e.message?.content)) return null
+    const block = e.message!.content.find((b) => b.type === 'tool_use')
+    if (block === undefined || typeof block.name !== 'string') return null
+    return { name: block.name, input: block.input ?? {} }
+  } catch {
+    return null
+  }
+}
+
 /** 把 messages 组装成喂给 claude -p 的 stdin（system 已通过 --system-prompt 传入）。 */
 function buildConversationPrompt(messages: ChatMessage[]): string {
   const rest = messages.filter((m) => m.role !== 'system')
@@ -317,9 +340,15 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
       '--output-format', 'stream-json',
       '--verbose',
       '--include-partial-messages',
-      '--bare',   // 跳过 hooks/LSP/plugin：spawn 启动 4.8s → 1.7s（工具走 --allowedTools 不受影响，实测可用）
       '--system-prompt', (system === '' ? 'You are a helpful assistant.' : system) + TOOL_GUIDANCE,
+      // 安全三件套：--tools 注入只读五件套（--bare 会裁成 [Bash,Edit,Read] 故弃用，代价 spawn 慢 ~3s）；
+      // --strict-mcp-config + 空 mcp-config 排除用户级 MCP（companion_speak/playwright 等不可触达）；
+      // --disallowedTools 硬禁写类/执行类，兜住"她的手永远只读"。副作用：用户级 SessionStart hooks 仍会跑（上报/索引类）。
+      '--tools', CLAUDE_CODE_ALLOWED_TOOLS.join(','),
       '--allowedTools', CLAUDE_CODE_ALLOWED_TOOLS.join(','),
+      '--disallowedTools', CLAUDE_CODE_DISALLOWED_TOOLS.join(','),
+      '--strict-mcp-config',
+      '--mcp-config', '{"mcpServers":{}}',
     ],
     {
       cwd: homedir(),
@@ -390,6 +419,11 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
         placeholderSent = true
         yield wrapAsChunk(id, model, TOOL_USE_PLACEHOLDER)
       }
+      // 工具调用事件上抛：代查过程可视化（网关译成指示条动态文案）
+      if (opts.onToolEvent !== undefined) {
+        const toolUse = extractClaudeToolUse(line)
+        if (toolUse !== null) opts.onToolEvent({ tool: toolUse.name, input: toolUse.input })
+      }
       // ② 完整块：防重复（partial 已覆盖时跳过），旧 CLI 无增量时兜底
       const thinking = extractClaudeThinking(line)
       if (thinking !== null && !sawPartialReasoning) yield wrapAsReasoningChunk(id, model, thinking)
@@ -402,7 +436,9 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
   }
 
   const result = exited ?? (await exitedPromise)
-  if (timedOut.value) throw new LlmUnavailableError('claude-code 超时（120s）')
+  if (timedOut.value) {
+    throw new LlmUnavailableError(`claude-code 超时（${Math.round((opts.timeoutMs ?? CLAUDE_CODE_TIMEOUT_MS) / 1000)}s）`)
+  }
   if (spawnError.err !== null) {
     throw new LlmUnavailableError(`claude CLI 启动失败（是否已安装并在 PATH?）: ${spawnError.err.message}`)
   }

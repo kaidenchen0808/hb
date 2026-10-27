@@ -299,3 +299,49 @@ describe('贴图多模态路由', () => {
     expect(body.model).toBe('GLM-4.5V')
   })
 })
+
+describe('代查过程可视化（onToolEvent → 指示条文案）', () => {
+  it('toolStatusText：工具调用译成人话，长输入截断', async () => {
+    const { toolStatusText } = await import('../src/http/gateway.ts')
+    expect(toolStatusText('WebSearch', { query: '深圳天气' })).toBe('她正在搜索：深圳天气')
+    expect(toolStatusText('WebFetch', { url: 'https://example.com/a' })).toBe('她正在读网页：https://example.com/a')
+    expect(toolStatusText('Read', { file_path: '/tmp/a.md' })).toBe('她正在读文件：/tmp/a.md')
+    expect(toolStatusText('Glob', { pattern: '*.pptx' })).toBe('她正在找文件：*.pptx')
+    expect(toolStatusText('Grep', { pattern: 'foo' })).toBe('她正在搜内容：foo')
+    expect(toolStatusText('Unknown', {})).toBe('她正在查资料…')
+    const long = 'x'.repeat(60)
+    expect(toolStatusText('WebSearch', { query: long })).toBe(`她正在搜索：${'x'.repeat(40)}…`)
+  })
+
+  it('toolStatusText：非字符串输入不炸（空串兜底）', async () => {
+    const { toolStatusText } = await import('../src/http/gateway.ts')
+    expect(toolStatusText('WebSearch', { query: 123 })).toBe('她正在搜索：')
+  })
+
+  it('lookupFailText：超时/故障两态 + 问题截断 30 字', async () => {
+    const { lookupFailText } = await import('../src/http/gateway.ts')
+    expect(lookupFailText('大盘', 'claude-code 超时（300s）')).toContain('查了太久也没等到结果')
+    expect(lookupFailText('大盘', 'claude CLI 退出码 1: xxx')).toContain('查询管道出了点故障')
+    expect(lookupFailText('大盘', 'x')).toContain('「大盘」')
+    const longQ = '问'.repeat(50)
+    expect(lookupFailText(longQ, '超时')).not.toContain('问'.repeat(31))
+  })
+})
+
+describe('extractClaudeToolUse（stream-json 工具事件提取）', () => {
+  it('完整 assistant 块提取 name+input', async () => {
+    const { extractClaudeToolUse } = await import('../src/brain/llmClient.ts')
+    const line = JSON.stringify({
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: '' }, { type: 'tool_use', name: 'WebSearch', input: { query: 'A股收盘' } }] },
+    })
+    expect(extractClaudeToolUse(line)).toEqual({ name: 'WebSearch', input: { query: 'A股收盘' } })
+  })
+
+  it('非工具调用行/坏 JSON/缺 name 均返回 null', async () => {
+    const { extractClaudeToolUse } = await import('../src/brain/llmClient.ts')
+    expect(extractClaudeToolUse(JSON.stringify({ type: 'result', result: 'ok' }))).toBeNull()
+    expect(extractClaudeToolUse('not json')).toBeNull()
+    expect(extractClaudeToolUse(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', input: {} }] } }))).toBeNull()
+  })
+})
