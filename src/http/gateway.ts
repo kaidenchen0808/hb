@@ -41,7 +41,8 @@ const LOOKUP_GUIDANCE = `
 你自己不能联网、也打不开文件。当主人问需要外部信息的问题（天气、新闻、资料、找图片、他电脑里的内容），或发来一个文件路径让你看（.docx/.pptx/.xlsx/.pdf/截图等你打不开的文件）时：
 1. 先回一句自然的简短转场话（比如"等我查一下哦～"），不要编造答案
 2. 然后在回复的最末尾另起一行，原样输出：[lookup] 一句话写下要查的问题或文件路径
-之后会有人帮你查/帮你读文件，你拿到结果会再告诉主人。转场了就必须带 [lookup]，说了"我去看看"却不带标记，主人会永远等不到下文。不需要查资料时就正常回答，绝不要输出 [lookup]。`
+之后会有人帮你查/帮你读文件，你拿到结果会再告诉主人。转场了就必须带 [lookup]，说了"我去看看"却不带标记，主人会永远等不到下文。不需要查资料时就正常回答，绝不要输出 [lookup]。
+**能看到就直接答**：主人发来的图片、内联的文件文字你都直接看得见——绝不要转场代查，直接基于看到的内容回答（代查通道收不到你看到的图片，转场只会丢信息）。[lookup] 只用于你确实看不到的东西。`
 
 /** hybrid 模式专属：思考过程主人能看到，必须中文（与 claude-code 模式的 TOOL_GUIDANCE 对齐）。 */
 const THINKING_LANGUAGE_GUIDANCE = `
@@ -538,7 +539,7 @@ async function lookupAndSay(
   deps: GatewayDeps,
   input: { query: string; userQuestion: string; systemPrompt: string },
 ): Promise<void> {
-  const { db, config } = deps
+  const { db, config, persona } = deps
   console.log(`[lookup] 派 claude 代查: ${input.query}`)
   const abort = new AbortController()
   activeLookupAbort = abort
@@ -551,7 +552,9 @@ async function lookupAndSay(
       model: config.brainModel,
       signal: abort.signal,
       messages: [
-        { role: 'system', content: input.systemPrompt },
+        // 精简代查指令（不用聊天 systemPrompt——含对话史/事件会把代查带偏，
+        // 2026-10-27 实测：query 是简历截图、claude 顺着上下文回了天气）
+        { role: 'system', content: `你是${persona.name}，正在替主人查一件小事。无论上下文提到过什么，只完成当前这一个查询任务，输出人设化的口语结论。` },
         {
           role: 'user',
           content: `主人刚才问你："${input.userQuestion}"。你已经查到了，把结果告诉主人。${/[~/]\S+\.[a-z0-9]{2,4}/i.test(input.query) ? '问题里是文件路径：先用 Read 工具读取该文件（Read 支持 txt/md/json/代码等纯文本；.docx/.xlsx 等二进制格式读不了就如实说明）。' : ''}**严格按 JSON 输出**，不要输出 JSON 以外的任何内容：
