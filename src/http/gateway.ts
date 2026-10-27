@@ -194,6 +194,8 @@ export function handleChatCompletion(deps: GatewayDeps) {
     }
     // 客户端 / 技能选择器随轮携带的技能（prompt 注入；不进消息序列/落库）
     const skills = parseSkills(body?.skills)
+    // 思考开关（默认开；快问快答场景关闭，GLM 端点原生 disabled 2.8s→1.1s）
+    const disableThinking = body?.thinking === false
 
     // 1) 丢弃 app 的人格 system，检测主动开口信号
     let proactiveHint: 'online' | 'quiet' | undefined
@@ -278,6 +280,7 @@ export function handleChatCompletion(deps: GatewayDeps) {
           messages: upstreamMessages,
           signal: c.req.raw.signal,
           apiFormat: chatApiFormat,
+          disableThinking,
         })) {
           // 推理过程 chunk：原样透传（不参与 [lookup] 标记感知，也不计入 assistantText 结算）
           if (extractReasoning(data) !== '') {

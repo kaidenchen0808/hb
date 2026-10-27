@@ -19,6 +19,8 @@ export interface StreamChatOptions {
   signal?: AbortSignal
   /** claude-code 模式专属：子进程总超时（默认 120s；多轮工具调用场景如搜图可放宽）。 */
   timeoutMs?: number
+  /** 关闭思考（anthropic 端点 thinking:{type:disabled}，GLM 实测 2.8s→1.1s）。 */
+  disableThinking?: boolean
   temperature?: number
   /** openai: /chat/completions；anthropic: /v1/messages；claude-code: spawn claude -p 子进程（带只读工具） */
   apiFormat?: 'openai' | 'anthropic' | 'claude-code'
@@ -119,7 +121,7 @@ async function* streamAnthropic(opts: StreamChatOptions): AsyncGenerator<string>
     }))
     return { role: m.role, content: [...blocks, { type: 'text', text: m.content }] }
   })
-  const res = await startUpstream(
+    const res = await startUpstream(
     `${opts.baseUrl}/v1/messages`,
     { 'x-api-key': opts.apiKey, 'anthropic-version': '2023-06-01' },
     JSON.stringify({
@@ -129,6 +131,7 @@ async function* streamAnthropic(opts: StreamChatOptions): AsyncGenerator<string>
       max_tokens: 2048,
       stream: true,
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
+      ...(opts.disableThinking ? { thinking: { type: 'disabled' } } : {}),
     }),
     opts.signal,
   )
