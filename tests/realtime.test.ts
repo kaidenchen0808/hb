@@ -42,6 +42,7 @@ async function startServer(companionApiKey: string | null = null): Promise<strin
     brainBaseUrl: '',
     brainApiKey: '',
     brainModel: '',
+    brainVisionModel: '',
     brainApiFormat: 'openai' as const,
     companionApiKey,
     reactionsEnabled: false,

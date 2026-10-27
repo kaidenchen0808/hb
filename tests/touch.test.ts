@@ -17,6 +17,7 @@ const config: AppConfig = {
   brainBaseUrl: '',
   brainApiKey: '',
   brainModel: '',
+    brainVisionModel: '',
   brainApiFormat: 'openai' as const,
   companionApiKey: null,
   reactionsEnabled: false,

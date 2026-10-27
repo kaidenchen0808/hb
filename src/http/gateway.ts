@@ -145,6 +145,23 @@ interface IncomingMessage {
   content: unknown
 }
 
+/** 从 content parts 抽图片（data:image/...;base64,xxx）→ anthropic base64 block 形态。
+ *  app 贴图经 WSOutgoing.chat 的 images 字段走 encodeMessages 的 content-parts。 */
+export function extractContentImages(content: unknown): Array<{ mediaType: string; data: string }> {
+  if (!Array.isArray(content)) return []
+  const out: Array<{ mediaType: string; data: string }> = []
+  for (const part of content) {
+    if (part === null || typeof part !== 'object') continue
+    const url = (part as { image_url?: { url?: unknown } }).image_url?.url
+    if (typeof url !== 'string' || !url.startsWith('data:image/')) continue
+    const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(url)
+    if (m === null) continue
+    out.push({ mediaType: m[1].toLowerCase(), data: m[2] })
+    if (out.length >= 4) break  // 每轮最多 4 图（体积与注意力平衡）
+  }
+  return out
+}
+
 /** OpenAI content 兼容归一：字符串或 [{type:'text',text}] → 纯文本。 */
 function normalizeContent(content: unknown): string {
   if (typeof content === 'string') return content
@@ -182,7 +199,14 @@ export function handleChatCompletion(deps: GatewayDeps) {
         continue // 人格替换：app 自带 prompt 一律不用
       }
       if (m.role === 'user' || m.role === 'assistant') {
-        if (content.trim() !== '') chatMessages.push({ role: m.role, content })
+        if (content.trim() !== '') {
+          if (m.role === 'user') {
+            const images = extractContentImages(m.content)
+            chatMessages.push(images.length > 0 ? { role: m.role, content, images } : { role: m.role, content })
+          } else {
+            chatMessages.push({ role: m.role, content })
+          }
+        }
       }
     }
     if (chatMessages.filter((m) => m.role === 'user').length === 0 && proactiveHint === undefined) {
@@ -230,6 +254,9 @@ export function handleChatCompletion(deps: GatewayDeps) {
     let assistantText = ''
     lastRequestWasProactive = proactiveHint !== undefined
     const chatApiFormat = config.brainApiFormat === 'hybrid' ? directFormat(config) : config.brainApiFormat
+    // 多模态路由：带图轮次切视觉模型（GLM-5.3 收图但看不了；GLM-4.5V 实测可看）
+    const hasImages = chatMessages.some((m) => m.images !== undefined && m.images.length > 0)
+    const turnModel = hasImages && config.brainVisionModel !== '' ? config.brainVisionModel : config.brainModel
 
     return streamSSE(c, async (stream) => {
       // 流式透传 + [lookup] 标记感知（仅 hybrid 模式的回复会出现标记；非 hybrid 走同一逻辑零开销）
@@ -239,7 +266,7 @@ export function handleChatCompletion(deps: GatewayDeps) {
         for await (const data of streamChatCompletion({
           baseUrl: config.brainBaseUrl,
           apiKey: config.brainApiKey,
-          model: config.brainModel,
+          model: turnModel,
           messages: upstreamMessages,
           signal: c.req.raw.signal,
           apiFormat: chatApiFormat,

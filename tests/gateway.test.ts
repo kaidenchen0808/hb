@@ -45,6 +45,7 @@ function makeApp(brainReady: boolean): Hono {
     brainBaseUrl: brainReady ? `http://127.0.0.1:${upstreamPort}/v1` : '',
     brainApiKey: brainReady ? 'test-key' : '',
     brainModel: brainReady ? 'test-model' : '',
+    brainVisionModel: 'GLM-4.5V',
     brainApiFormat: 'openai' as const,
     companionApiKey: null,
     reactionsEnabled: false, // 测试里关掉，避免 mock 上游被反应生成调用
@@ -263,5 +264,38 @@ describe('代查结果 JSON 解析（引用来源）', () => {
       Array.from({ length: 8 }, (_, i) => ({ title: `t${i}`, url: `https://x.com/${i}` }))
     ) + '}')
     expect(many.sources).toHaveLength(5)
+  })
+})
+
+describe('贴图多模态路由', () => {
+  it('extractContentImages：data-URI 抽取/上限4/非图过滤', async () => {
+    const { extractContentImages } = await import('../src/http/gateway.ts')
+    const parts = [
+      { type: 'text', text: '这是什么' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJD' } },
+      { type: 'image_url', image_url: { url: 'https://not-data.com/a.png' } },  // 非 data-URI 忽略
+    ]
+    expect(extractContentImages(parts)).toEqual([{ mediaType: 'image/png', data: 'QUJD' }])
+    expect(extractContentImages('普通字符串')).toEqual([])
+    expect(extractContentImages([{ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,WA==' } }]))
+      .toEqual([{ mediaType: 'image/jpeg', data: 'WA==' }])
+  })
+
+  it('带图请求路由到视觉模型（upstream 收到 vision model + image block）', async () => {
+    const app = makeApp(true)
+    const res = await app.request('/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'x', stream: true,
+        messages: [{ role: 'user', content: [
+          { type: 'image_url', image_url: { url: 'data:image/png;base64,QUJD' } },
+          { type: 'text', text: '图里是什么' },
+        ] }],
+      }),
+    })
+    await res.text()
+    const body = upstreamBodies[upstreamBodies.length - 1]
+    expect(body.model).toBe('GLM-4.5V')
   })
 })

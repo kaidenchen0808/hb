@@ -13,6 +13,8 @@ export interface AppConfig {
   brainBaseUrl: string
   brainApiKey: string
   brainModel: string
+  /** 视觉模型（带图轮次自动路由；空串 = 贴图功能关闭，退主模型并剥图）。 */
+  brainVisionModel: string
   brainApiFormat: BrainApiFormat
   companionApiKey: string | null
   reactionsEnabled: boolean
@@ -59,6 +61,7 @@ export function loadConfig(): AppConfig {
     brainBaseUrl: readStr('BRAIN_BASE_URL').replace(/\/+$/, ''),
     brainApiKey: readStr('BRAIN_API_KEY'),
     brainModel: readStr('BRAIN_MODEL'),
+    brainVisionModel: readStr('BRAIN_VISION_MODEL', 'GLM-4.5V'),
     brainApiFormat: readBrainFormat(readStr('BRAIN_API_FORMAT', 'openai')),
     companionApiKey: readStr('COMPANION_API_KEY') || null,
     reactionsEnabled: readStr('REACTIONS_ENABLED', 'true') !== 'false',

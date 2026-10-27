@@ -7,6 +7,8 @@ import { dirname } from 'node:path'
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant'
   content: string
+  /** 多模态轮（app 贴图）：base64 图，anthropic 直连组装 image content block。 */
+  images?: Array<{ mediaType: string; data: string }>
 }
 
 export interface StreamChatOptions {
@@ -107,16 +109,23 @@ async function* streamOpenai(opts: StreamChatOptions): AsyncGenerator<string> {
 /** Anthropic 兼容：/v1/messages 的 content_block_delta 转成 OpenAI chunk。 */
 async function* streamAnthropic(opts: StreamChatOptions): AsyncGenerator<string> {
   const system = opts.messages.filter((m) => m.role === 'system').map((m) => m.content).join('\n\n')
-  const rest = opts.messages
-    .filter((m) => m.role !== 'system')
-    .map((m) => ({ role: m.role, content: m.content }))
+  const rest = opts.messages.filter((m) => m.role !== 'system')
+  // 带图消息组装 anthropic content blocks（[image..., text]）；无图保持纯文本
+  const blockMessages = rest.map((m) => {
+    if (m.images === undefined || m.images.length === 0) return m
+    const blocks = m.images.map((img) => ({
+      type: 'image',
+      source: { type: 'base64', media_type: img.mediaType, data: img.data },
+    }))
+    return { role: m.role, content: [...blocks, { type: 'text', text: m.content }] }
+  })
   const res = await startUpstream(
     `${opts.baseUrl}/v1/messages`,
     { 'x-api-key': opts.apiKey, 'anthropic-version': '2023-06-01' },
     JSON.stringify({
       model: opts.model,
       system: system === '' ? undefined : system,
-      messages: rest,
+      messages: blockMessages,
       max_tokens: 2048,
       stream: true,
       ...(opts.temperature !== undefined ? { temperature: opts.temperature } : {}),
