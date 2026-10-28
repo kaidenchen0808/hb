@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { openDb, type CompanionDb } from '../src/db/database.ts'
 import { finalizeSession, summarizeSession, buildSessionSummary, type SessionStats } from '../src/memory/aggregator.ts'
 import { recordRawEvent, type RawEventRow } from '../src/memory/rawEvents.ts'
-import { insertEvent, recentEvents, unconsumedEvents, markAllConsumed } from '../src/memory/eventStore.ts'
+import { insertEvent, recentEvents, unconsumedEvents, markAllConsumed, pruneEvents } from '../src/memory/eventStore.ts'
 import { insertFacts, parseExtractedFacts, recentFacts } from '../src/memory/facts.ts'
 import { decideReaction, recordReaction } from '../src/memory/reactions.ts'
 import {
@@ -65,6 +65,32 @@ describe('eventStore', () => {
     expect(markAllConsumed(db)).toBe(2)
     expect(unconsumedEvents(db)).toHaveLength(0)
     expect(recentEvents(db, 10)).toHaveLength(2) // 消费后仍可查历史
+  })
+})
+
+describe('事件表保留策略（pruneEvents：raw 30 天 / agent 已消费 90 天）', () => {
+  it('过期 raw_events 删除、过期已消费 agent_events 删除、过期未消费的保留', () => {
+    const now = new Date('2026-10-28T12:00:00Z')
+    // 40 天前的 raw（应删）+ 10 天前的 raw（应留）
+    db.prepare(`INSERT INTO raw_events (agent, session_id, hook_type, created_at) VALUES ('a','s1','PostToolUse',?)`).run('2026-09-18T00:00:00Z')
+    db.prepare(`INSERT INTO raw_events (agent, session_id, hook_type, created_at) VALUES ('a','s2','PostToolUse',?)`).run('2026-10-18T00:00:00Z')
+    // 100 天前已消费的 agent（应删）+ 100 天前未消费的（必须保留——她的视野）
+    db.prepare(`INSERT INTO agent_events (agent, event_type, summary, created_at, consumed_at) VALUES ('a','task_failed','旧的已消费',?,?)`).run('2026-07-20T00:00:00Z', '2026-07-20T01:00:00Z')
+    db.prepare(`INSERT INTO agent_events (agent, event_type, summary, created_at) VALUES ('a','task_failed','旧的未消费',?)`).run('2026-07-20T00:00:00Z')
+    pruneEvents(db, now)
+    expect(db.prepare(`SELECT COUNT(*) c FROM raw_events`).get()).toEqual({ c: 1 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM agent_events`).get()).toEqual({ c: 1 })
+    expect(recentEvents(db, 10)[0]?.summary).toBe('旧的未消费')
+  })
+
+  it('同日幂等：第二次调用直接跳过（模块级日标记）', () => {
+    const now = new Date('2026-10-28T12:00:00Z')
+    pruneEvents(db, now)  // 设当日标记（无行可删）
+    db.prepare(`INSERT INTO raw_events (agent, session_id, hook_type, created_at) VALUES ('a','s3','PostToolUse',?)`).run('2026-01-01T00:00:00Z')
+    pruneEvents(db, now)  // 同日第二次：跳过，旧行仍在
+    expect(db.prepare(`SELECT COUNT(*) c FROM raw_events`).get()).toEqual({ c: 1 })
+    pruneEvents(db, new Date('2026-10-29T00:00:00Z'))  // 次日：真正执行
+    expect(db.prepare(`SELECT COUNT(*) c FROM raw_events`).get()).toEqual({ c: 0 })
   })
 })
 

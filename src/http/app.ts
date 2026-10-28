@@ -3,7 +3,7 @@ import type { AppConfig } from '../config.ts'
 import type { CompanionDb } from '../db/database.ts'
 import type { Persona } from '../persona/loader.ts'
 import { handleChatCompletion, currentLookupStatus, cancelActiveLookup, type GatewayDeps } from './gateway.ts'
-import { insertEvent, isEventType, recentEvents } from '../memory/eventStore.ts'
+import { insertEvent, isEventType, pruneEvents, recentEvents } from '../memory/eventStore.ts'
 import { isHookType, recordRawEvent, type RawEventInput } from '../memory/rawEvents.ts'
 import { finalizeSession } from '../memory/aggregator.ts'
 import { drainOutbox, enqueueSay } from '../memory/outbox.ts'
@@ -143,6 +143,7 @@ export function createApp(deps: AppDeps): Hono {
     let reaction: string | null = null
     if (finalized !== null) {
       settleAgentPresence(db)
+      pruneEvents(db)  // 聚合低频入口顺带滚动清理（进程内每日一次，见 eventStore 注释）
       reaction = maybeReact(deps, {
         event_type: 'session_completed',
         agent: body.agent,
