@@ -249,6 +249,12 @@ describe('代查结果 JSON 解析（引用来源）', () => {
     expect(formatSourcesBlock(parsed.sources)).toContain('[天气网](https://t.com/a)')
   })
 
+  it('review M1 反例：转储含前置 {"result": 对象，取最后一个（matchAll 尾匹配）', async () => {
+    const { parseLookupResult } = await import('../src/http/gateway.ts')
+    const raw = 'noise {"result": "工具转储里的假结果", "sources": []}\n后置说明 {"result": "[happy] 真台词", "sources": []}'
+    expect(parseLookupResult(raw).result).toBe('[happy] 真台词')
+  })
+
   it('真实事故样本：webReader 工具转储前置 + 正确 JSON 在后，仍取到干净 result/sources（2026-10-27 e2e 实测）', async () => {
     const { parseLookupResult } = await import('../src/http/gateway.ts')
     // GLM server 工具（webReader）的执行轨迹作为 text 流出，混在最终 JSON 前面——
@@ -333,12 +339,32 @@ describe('贴图多模态路由', () => {
   })
 })
 
+describe('失信兜底收紧（review H1/H2/M3）：承诺式短转场 + URL 排除', () => {
+  it('承诺式转场短话仍命中', async () => {
+    const { detectUnfulfilledFileRead } = await import('../src/http/gateway.ts')
+    expect(detectUnfulfilledFileRead('/Users/x/a.pptx 讲什么', '[curious] 好嘞，等我打开看看里面写了什么～')).toBe('/Users/x/a.pptx')
+    expect(detectUnfulfilledFileRead('看 ~/d/报.docx', '我去读哦')).toBe('~/d/报.docx')
+  })
+
+  it('长回复里的"打开/看看"不误伤（咨询解答/vision 直答都是长回复）', async () => {
+    const { detectUnfulfilledFileRead } = await import('../src/http/gateway.ts')
+    const long = '[neutral] 这个问题分三步：第一步先打开设置，第二步看看网络配置' + '细节说明。'.repeat(30)
+    expect(detectUnfulfilledFileRead('~/Downloads/report.pdf 打开后乱码怎么回事', long)).toBeNull()
+  })
+
+  it('URL 不当路径派 Read（// 排除）', async () => {
+    const { looksLikeFilePath } = await import('../src/http/gateway.ts')
+    expect(looksLikeFilePath('帮我看看 https://example.com/photo.png 这张图')).toBeNull()
+    expect(looksLikeFilePath('读一下 /Users/x/notes.md 给我')).toBe('/Users/x/notes.md')
+  })
+})
+
 describe('失信兜底：转场了却没带 [lookup]（文件路径场景自动代派）', () => {
   it('用户发路径 + 她说转场话 + 无标记 → 提取路径自动代读', async () => {
     const { detectUnfulfilledFileRead } = await import('../src/http/gateway.ts')
-    expect(detectUnfulfilledFileRead('/Users/x/Desktop/a.pptx 里讲了什么', '[curious] 我来看看它都写了啥哈～')).toBe('/Users/x/Desktop/a.pptx')
+    expect(detectUnfulfilledFileRead('/Users/x/Desktop/a.pptx 里讲了什么', '[curious] 等我看看它都写了啥哈～')).toBe('/Users/x/Desktop/a.pptx')
     expect(detectUnfulfilledFileRead('看看 ~/Desktop/报告.docx', '等我打开看看里面写了什么～')).toBe('~/Desktop/报告.docx')
-    expect(detectUnfulfilledFileRead('/tmp/log.txt 最后一行', '我读一下哈')).toBe('/tmp/log.txt')
+    expect(detectUnfulfilledFileRead('/tmp/log.txt 最后一行', '我去读一下哈')).toBe('/tmp/log.txt')
   })
 
   it('她没答应看（无转场词）→ 不兜底，避免误触发', async () => {

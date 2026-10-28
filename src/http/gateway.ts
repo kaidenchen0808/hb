@@ -90,12 +90,15 @@ export function buildSkillSection(skills: Array<{ name: string; content: string 
 export function parseLookupResult(raw: string): { result: string; sources: Array<{ title: string; url: string }> } {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
   // 前置路径：GLM 的 server 工具（webReader 等）执行轨迹会作为 text 混在最终 JSON 前面
-  // （轨迹自带 {"url":…} 等 JSON 片段），旧的"首个 { 到最后一个 }"会剖出跨段坏片解析失败、
-  // 回落成把工具转储当台词（2026-10-27 e2e 实测）。改为定位最后一个 "result": 键，从其
-  // 所在 { 起做花括号平衡扫描（正确处理字符串内的 {} 与转义），天然跳过前置转储。
-  const keyed = text.match(/\{\s*"result"\s*:/)
-  if (keyed !== null && keyed.index !== undefined) {
-    const parsed = parseResultShape(sliceBalancedObject(text, keyed.index))
+  // （轨迹自带 {"url":…} 等 JSON 片段，甚至可能含字面 {"result":…} 前置对象），旧的
+  // "首个 { 到最后一个 }"会剖出跨段坏片解析失败、回落成把工具转储当台词（2026-10-27
+  // e2e 实测）。改为定位**最后一个** "result": 键（matchAll 取尾——首匹配会在转储含
+  // {"result": 前缀对象时剖错，review M1），从其所在 { 起做花括号平衡扫描（正确处理
+  // 字符串内的 {} 与转义），天然跳过前置转储。
+  let keyedIndex = -1
+  for (const m of text.matchAll(/\{\s*"result"\s*:/g)) keyedIndex = m.index ?? keyedIndex
+  if (keyedIndex >= 0) {
+    const parsed = parseResultShape(sliceBalancedObject(text, keyedIndex))
     if (parsed !== null) return parsed
   }
   // 兜底路径：老格式容错（"result" 键缺失时不丢内容）
@@ -372,6 +375,7 @@ export function handleChatCompletion(deps: GatewayDeps) {
           milestoneStage: milestone?.stage,
           lookupQuery,
           systemPrompt,
+          hadImages: hasImages,  // vision 轮她已经直接看到图，兜底代读只会丢信息（review H1）
         })
       }
     })
@@ -389,6 +393,7 @@ function settleAfterChat(
     milestoneStage?: string
     lookupQuery?: string | null
     systemPrompt?: string
+    hadImages?: boolean
   },
 ): void {
   const { db, config, persona } = deps
@@ -452,7 +457,12 @@ function settleAfterChat(
 
     // hybrid 二段：她答应去查 → 派 claude 代查 → 结果经通知通道让她主动说。
     // 失信兜底：转场了却没带标记时自动代读（detectUnfulfilledFileRead 注释里有实测背景）。
-    const fallbackQuery = input.lookupQuery ?? detectUnfulfilledFileRead(input.lastUser ?? '', input.assistantText)
+    // hybrid 守卫：[lookup] 协议只在 hybrid 注入，openai/anthropic 纯直连（可能没装 claude
+    // CLI）与 claude-code 主聊天（她有工具自己能读）都不该派——review M2。
+    // vision 轮跳过兜底：图她已直接看到，代读只会丢信息（review H1）。
+    const fallbackQuery = config.brainApiFormat !== 'hybrid'
+      ? null
+      : (input.lookupQuery ?? (input.hadImages === true ? null : detectUnfulfilledFileRead(input.lastUser ?? '', input.assistantText)))
     if (fallbackQuery !== null && fallbackQuery !== '' && input.lastUser !== null && input.systemPrompt !== undefined) {
       if (input.lookupQuery === null) console.log(`[lookup] 失信兜底：转场无标记，自动代读 ${fallbackQuery}`)
       void lookupAndSay(deps, { query: fallbackQuery, userQuestion: input.lastUser, systemPrompt: input.systemPrompt })
@@ -522,17 +532,24 @@ export function lookupFailText(query: string, reason: string): string {
   return `[sad] 唔……刚才答应主人查的「${query.slice(0, 30)}」，${shortReason}，对不起嘛……`
 }
 
-/** 失信兜底：她回了转场话（"我来看看/打开看看"）却没带 [lookup] 标记——GLM 对协议的遵循
+/** 失信兜底：她回了转场话（"等我打开看看"）却没带 [lookup] 标记——GLM 对协议的遵循
  *  不稳（2026-10-27 实测文件路径场景连续两轮失信），主人会永远等不到下文。三条件兜底自动
- *  代派：用户消息含文件路径 + 她的回复含转场词 + 无标记。她说"我不看/打不开"类拒绝不会
- *  命中转场词，误伤极小。返回提取到的路径（null=不兜底）。 */
+ *  代派：用户消息含文件路径 + 她的回复是**承诺式短转场话** + 无标记。承诺式词表 +
+ *  80 字长度约束把误伤压到最低（"打开/看看"是完整正常回答里的高频口语——review 实测
+ *  咨询解答与 vision 直答轮都含，但它们都不是短转场话）。拒绝类话术不命中。 */
 export function detectUnfulfilledFileRead(lastUser: string, assistantText: string): string | null {
   if (lastUser === '' || assistantText.includes(LOOKUP_MARKER)) return null
-  const TRANSITION_WORDS = /看看|打开|读一读|读一下|读下|瞧瞧|瞧一瞧|瞄一眼|我来看/
-  if (!TRANSITION_WORDS.test(assistantText)) return null
-  const FILE_PATH = /(?:~|\/)[^\s，。；？！、）】""]*\.[A-Za-z0-9]{2,4}/
-  const m = lastUser.match(FILE_PATH)
-  return m !== null ? m[0] : null
+  const PROMISE_WORDS = /等我查|我去查|等我看看|我去看看|等我读|我去读|等我打开|我去打开|等我瞧|我去瞧/
+  if (!PROMISE_WORDS.test(assistantText) || assistantText.length > 80) return null
+  return looksLikeFilePath(lastUser)
+}
+
+/** 提取文本里的第一个本地文件路径（null=没有）。先剥掉 http(s) URL（域内 /photo.png
+ *  形态与路径无法区分，必须整体移除），再匹配 ~ 或 / 起头的路径；排除中英文引号/括号。
+ *  供失信兜底与代查 Read 引导共用（此前两处正则不一致有边界分歧——review L1）。 */
+export function looksLikeFilePath(s: string): string | null {
+  const m = s.replace(/https?:\/\/\S+/g, '').match(/(?:~|\/)[^\s，。；？！、）】【""()"'《》]*\.[A-Za-z0-9]{2,4}/)
+  return m?.[0] ?? null
 }
 
 async function lookupAndSay(
@@ -557,7 +574,7 @@ async function lookupAndSay(
         { role: 'system', content: `你是${persona.name}，正在替主人查一件小事。无论上下文提到过什么，只完成当前这一个查询任务，输出人设化的口语结论。` },
         {
           role: 'user',
-          content: `主人刚才问你："${input.userQuestion}"。你已经查到了，把结果告诉主人。${/[~/]\S+\.[a-z0-9]{2,4}/i.test(input.query) ? '问题里是文件路径：先用 Read 工具读取该文件（Read 支持 txt/md/json/代码等纯文本；.docx/.xlsx 等二进制格式读不了就如实说明）。' : ''}**严格按 JSON 输出**，不要输出 JSON 以外的任何内容：
+          content: `主人刚才问你："${input.userQuestion}"。你已经查到了，把结果告诉主人。${looksLikeFilePath(input.query) !== null ? '问题里是文件路径：先用 Read 工具读取该文件（Read 支持 txt/md/json/代码等纯文本；.docx/.xlsx 等二进制格式读不了就如实说明）。' : ''}**严格按 JSON 输出**，不要输出 JSON 以外的任何内容：
 {"result": "一到三句口语化结论（数字/事实要具体，以 [emotion] 标签开头；查到相关图片可在末尾用 ![描述](图片URL) 嵌入）", "sources": [{"title": "来源标题", "url": "真实抓到的来源URL"}]}
 规则：result 正文不要纯文本链接；sources 给 1~5 条你真正查过的出处（WebSearch/WebFetch 实际访问过的 URL），**绝不编造**；没有可靠来源就给空数组。不要提"工具""查询""系统"这些字眼。要查的问题：${input.query}`,
         },
@@ -578,13 +595,15 @@ async function lookupAndSay(
       recordLookupTurn(db, text)
       console.log(`[lookup] 结果已入队: ${text.slice(0, 60)}（来源 ${sources.length} 条）`)
     }
-    setLookupStatus(deps, null)
+    // 归属校验：并发代查时新任务已覆盖 activeLookupAbort/指示条，旧任务不得清它们
+    // （review H2：旧 finally 抹掉新 abort 会让指示条 ✕ 失效、任务在跑指示条却消失）
+    if (activeLookupAbort === abort) setLookupStatus(deps, null)
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     console.warn('[lookup] 代查失败:', reason)
     // 用户主动取消不算失败安抚场景（已说了要停）
     if (abort.signal.aborted) {
-      setLookupStatus(deps, null)
+      if (activeLookupAbort === abort) setLookupStatus(deps, null)
       return
     }
     const text = lookupFailText(input.query, reason)
@@ -595,6 +614,6 @@ async function lookupAndSay(
       if (activeLookupText === '查询失败了') setLookupStatus(deps, null)
     }, 2_000)
   } finally {
-    activeLookupAbort = null
+    if (activeLookupAbort === abort) activeLookupAbort = null
   }
 }
