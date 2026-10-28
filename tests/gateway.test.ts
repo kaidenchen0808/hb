@@ -379,6 +379,25 @@ describe('失信兜底：转场了却没带 [lookup]（文件路径场景自动�
   })
 })
 
+describe('代查表情标签归一（normalizeLookupEmotion）', () => {
+  it('合法标签原样保留', async () => {
+    const { normalizeLookupEmotion } = await import('../src/http/gateway.ts')
+    expect(normalizeLookupEmotion('[happy] 查到了')).toBe('[happy] 查到了')
+    expect(normalizeLookupEmotion('[neutral] 老公，明天多云')).toBe('[neutral] 老公，明天多云')
+  })
+
+  it('自造中文标签（[舒适]/[期待] 等实测违例）→ [neutral]，防正文残留', async () => {
+    const { normalizeLookupEmotion } = await import('../src/http/gateway.ts')
+    expect(normalizeLookupEmotion('[舒适] 今天多云')).toBe('[neutral] 今天多云')
+    expect(normalizeLookupEmotion('[期待] 明天见')).toBe('[neutral] 明天见')
+  })
+
+  it('无标签/正文中间的方括号不动', async () => {
+    const { normalizeLookupEmotion } = await import('../src/http/gateway.ts')
+    expect(normalizeLookupEmotion('查到了 [参考1] 见来源')).toBe('查到了 [参考1] 见来源')
+  })
+})
+
 describe('代查过程可视化（onToolEvent → 指示条文案）', () => {
   it('toolStatusText：工具调用译成人话，长输入截断', async () => {
     const { toolStatusText } = await import('../src/http/gateway.ts')

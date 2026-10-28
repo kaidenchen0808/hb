@@ -4,7 +4,7 @@ import { brainReady, directFormat, type AppConfig } from '../config.ts'
 import type { CompanionDb } from '../db/database.ts'
 import type { Persona } from '../persona/loader.ts'
 import { stageForAffinity } from '../persona/loader.ts'
-import { buildContextBlock, buildSystemPrompt } from '../persona/promptBuilder.ts'
+import { buildContextBlock, buildSystemPrompt, EMOTION_TAGS } from '../persona/promptBuilder.ts'
 import { extractDelta, extractReasoning, LlmUnavailableError, streamChatCompletion, TOOL_USE_PLACEHOLDER, wrapAsChunk, type ChatMessage } from '../brain/llmClient.ts'
 import { unconsumedEvents, markAllConsumed } from '../memory/eventStore.ts'
 import { recentFacts, extractFacts, insertFacts } from '../memory/facts.ts'
@@ -526,6 +526,15 @@ function recordLookupTurn(db: CompanionDb, content: string): void {
   )
 }
 
+/** 代查结果的表情标签归一：模型偶尔自造中文标签（[舒适]/[期待]——43 条实测违例 2 条，
+ *  app 端 displayContent 只剥 16 种已知英文标签，未知标签会残留在正文）。非法首标签
+ *  替换为 [neutral]（保底表情语义），正文中间的方括号与无标签文本不动。 */
+export function normalizeLookupEmotion(text: string): string {
+  const m = /^(\[([^\]]+)\])/.exec(text)
+  if (m === null) return text
+  return (EMOTION_TAGS as readonly string[]).includes(m[2]) ? text : `[neutral]${text.slice(m[1].length)}`
+}
+
 /** 代查失败文案：原因译成人话（超时/故障），带上原问题让她和主人对得上号。 */
 export function lookupFailText(query: string, reason: string): string {
   const shortReason = reason.includes('超时') ? '查了太久也没等到结果' : '查询管道出了点故障'
@@ -575,7 +584,7 @@ async function lookupAndSay(
         {
           role: 'user',
           content: `主人刚才问你："${input.userQuestion}"。你已经查到了，把结果告诉主人。${looksLikeFilePath(input.query) !== null ? '问题里是文件路径：先用 Read 工具读取该文件（Read 支持 txt/md/json/代码等纯文本；.docx/.xlsx 等二进制格式读不了就如实说明）。' : ''}**严格按 JSON 输出**，不要输出 JSON 以外的任何内容：
-{"result": "一到三句口语化结论（数字/事实要具体，以 [emotion] 标签开头；查到相关图片可在末尾用 ![描述](图片URL) 嵌入）", "sources": [{"title": "来源标题", "url": "真实抓到的来源URL"}]}
+{"result": "一到三句口语化结论（数字/事实要具体，以表情标签开头，只能是这些之一：[neutral]/[happy]/[sad]/[curious]/[surprised]/[excited]/[proud]/[shy]/[smirk]，绝不自造其他标签；查到相关图片可在末尾用 ![描述](图片URL) 嵌入）", "sources": [{"title": "来源标题", "url": "真实抓到的来源URL"}]}
 规则：result 正文不要纯文本链接；sources 给 1~5 条你真正查过的出处（WebSearch/WebFetch 实际访问过的 URL），**绝不编造**；没有可靠来源就给空数组。不要提"工具""查询""系统"这些字眼。要查的问题：${input.query}`,
         },
       ],
@@ -589,7 +598,7 @@ async function lookupAndSay(
     }
     const { result, sources } = parseLookupResult(raw)
     // 占位符是给聊天流防卡死的，outbox 一次性播出不需要，剥掉
-    const text = result.replace(TOOL_USE_PLACEHOLDER, '').trim() + formatSourcesBlock(sources)
+    const text = normalizeLookupEmotion(result.replace(TOOL_USE_PLACEHOLDER, '').trim()) + formatSourcesBlock(sources)
     if (text.trim() !== '') {
       enqueueSay(db, text, 'lookup')
       recordLookupTurn(db, text)
