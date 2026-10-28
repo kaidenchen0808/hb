@@ -498,7 +498,7 @@ function setLookupStatus(deps: GatewayDeps, text: string | null): void {
 /** 工具调用 → 指示条人话（代查过程可视化）。长输入截断防撑爆指示条。 */
 export function toolStatusText(tool: string, input: Record<string, unknown>): string {
   const clip = (v: unknown, max = 40): string => {
-    const s = typeof v === 'string' ? v : ''
+    const s = typeof v === 'string' ? v : '…'  // 非字符串输入给占位（尾巴不悬空）
     return s.length > max ? `${s.slice(0, max)}…` : s
   }
   switch (tool) {

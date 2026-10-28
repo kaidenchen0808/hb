@@ -392,9 +392,9 @@ describe('代查过程可视化（onToolEvent → 指示条文案）', () => {
     expect(toolStatusText('WebSearch', { query: long })).toBe(`她正在搜索：${'x'.repeat(40)}…`)
   })
 
-  it('toolStatusText：非字符串输入不炸（空串兜底）', async () => {
+  it('toolStatusText：非字符串输入不炸（占位符兜底，尾巴不悬空）', async () => {
     const { toolStatusText } = await import('../src/http/gateway.ts')
-    expect(toolStatusText('WebSearch', { query: 123 })).toBe('她正在搜索：')
+    expect(toolStatusText('WebSearch', { query: 123 })).toBe('她正在搜索：…')
   })
 
   it('lookupFailText：超时/故障两态 + 问题截断 30 字', async () => {

@@ -422,7 +422,14 @@ async function* streamClaudeCode(opts: StreamChatOptions): AsyncGenerator<string
       // 工具调用事件上抛：代查过程可视化（网关译成指示条动态文案）
       if (opts.onToolEvent !== undefined) {
         const toolUse = extractClaudeToolUse(line)
-        if (toolUse !== null) opts.onToolEvent({ tool: toolUse.name, input: toolUse.input })
+        // 回调链（指示条→WS 广播）任何异常不得打断流生成器——否则被 lookupAndSay 误判为代查失败
+        if (toolUse !== null) {
+          try {
+            opts.onToolEvent({ tool: toolUse.name, input: toolUse.input })
+          } catch (err) {
+            console.warn('[llmClient] onToolEvent 回调异常（忽略）:', err instanceof Error ? err.message : err)
+          }
+        }
       }
       // ② 完整块：防重复（partial 已覆盖时跳过），旧 CLI 无增量时兜底
       const thinking = extractClaudeThinking(line)
