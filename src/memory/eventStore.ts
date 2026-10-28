@@ -65,9 +65,9 @@ export function markAllConsumed(db: CompanionDb): number {
 }
 
 /** 事件表保留策略：raw_events 留 30 天（聚合后即弃）、agent_events 留 90 天且**只删
- *  已消费的**（未消费行是她的视野，绝不动）。两表此前只进不出无限增长（2026-10-28
- *  巡检：两天高强度使用 raw 已 5578 行）。进程内每日首次调用执行一次；双进程
- *  （HTTP/MCP）同库并发跑幂等无害（WAL + busy_timeout）。 */
+ *  已消费的**（未消费行是她的视野，绝不动）、outbox 已投递的留 90 天（未投递绝不动）。
+ *  各表此前只进不出无限增长（2026-10-28 巡检：两天高强度使用 raw 已 5578 行）。
+ *  进程内每日首次调用执行一次；双进程（HTTP/MCP）同库并发跑幂等无害（WAL+busy_timeout）。 */
 const RAW_RETENTION_DAYS = 30
 const AGENT_RETENTION_DAYS = 90
 let lastPruneDay = ''
@@ -79,4 +79,5 @@ export function pruneEvents(db: CompanionDb, now = new Date()): void {
   const cutoff = (days: number) => new Date(now.getTime() - days * 86_400_000).toISOString()
   db.prepare(`DELETE FROM raw_events WHERE created_at < ?`).run(cutoff(RAW_RETENTION_DAYS))
   db.prepare(`DELETE FROM agent_events WHERE created_at < ? AND consumed_at IS NOT NULL`).run(cutoff(AGENT_RETENTION_DAYS))
+  db.prepare(`DELETE FROM outbox WHERE created_at < ? AND delivered_at IS NOT NULL`).run(cutoff(AGENT_RETENTION_DAYS))
 }

@@ -92,6 +92,15 @@ describe('事件表保留策略（pruneEvents：raw 30 天 / agent 已消费 90 
     pruneEvents(db, new Date('2026-10-29T00:00:00Z'))  // 次日：真正执行
     expect(db.prepare(`SELECT COUNT(*) c FROM raw_events`).get()).toEqual({ c: 0 })
   })
+
+  it('outbox：已投递且超 90 天的删除，未投递的保留', () => {
+    const now = new Date('2026-10-30T12:00:00Z')  // 与前用例的日标记(10-29)错开，确保真正执行
+    db.prepare(`INSERT INTO outbox (text, source, created_at, delivered_at) VALUES ('旧的已投','lookup','2026-07-01T00:00:00Z','2026-07-01T00:01:00Z')`).run()
+    db.prepare(`INSERT INTO outbox (text, source, created_at) VALUES ('未投递','say',?)`).run('2026-07-01T00:00:00Z')
+    pruneEvents(db, now)
+    const rows = db.prepare(`SELECT source FROM outbox`).all() as { source: string }[]
+    expect(rows).toEqual([{ source: 'say' }])
+  })
 })
 
 describe('facts', () => {
